@@ -1,0 +1,40 @@
+Metadata-Version: 2.4
+Name: mjrl-lab
+Version: 0.0.1
+Summary: Dual-backend MuJoCo reinforcement learning framework: MuJoCo Warp on the GPU and native MuJoCo on multi-threaded CPU, sharing one set of managers and rsl_rl code
+Project-URL: Homepage, https://github.com/KingKongRobotics/jumper
+Project-URL: Repository, https://github.com/KingKongRobotics/jumper
+Project-URL: Issues, https://github.com/KingKongRobotics/jumper/issues
+Requires-Python: <3.14,>=3.10
+License-File: LICENSE
+License-File: NOTICE
+Requires-Dist: mujoco~=3.11.0
+Requires-Dist: mujoco-warp~=3.11.0
+Requires-Dist: warp-lang>=1.14.0
+Requires-Dist: torch>=2.7.0
+Requires-Dist: torchrunx>=0.3.4
+Requires-Dist: tyro>=1.0.1
+Requires-Dist: trimesh>=4.8.3
+Requires-Dist: scipy>=1.15
+Requires-Dist: viser>=1.0.27
+Requires-Dist: mjviser>=0.0.14
+Requires-Dist: mediapy>=1.2.7
+Requires-Dist: imageio-ffmpeg
+Requires-Dist: prettytable
+Requires-Dist: tqdm
+Requires-Dist: wandb
+Requires-Dist: PyYAML
+Requires-Dist: torchvision>=0.5.0
+Requires-Dist: tensordict>=0.7.0
+Requires-Dist: tensorboard
+Requires-Dist: GitPython
+Requires-Dist: onnx
+Requires-Dist: onnxscript>=0.5.4
+Requires-Dist: numpy
+Requires-Dist: jsonschema
+Requires-Dist: onnxruntime>=1.17
+Requires-Dist: tomli>=1.1; python_version < "3.11"
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: ruff; extra == "dev"
+Dynamic: license-file

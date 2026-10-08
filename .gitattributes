@@ -1,0 +1,9 @@
+*.app binary
+*.map binary
+*.so binary
+*.npz binary
+*.onnx binary
+*.pt binary
+*.png binary
+*.ttf binary
+*.sh text eol=lf

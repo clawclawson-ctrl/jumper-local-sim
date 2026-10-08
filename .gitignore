@@ -1,0 +1,10 @@
+.venv/
+.build/
+runs/
+MUJOCO_LOG.TXT
+install.log
+__pycache__/
+*.pyc
+*.mp4
+.DS_Store
+!toolkit/**/*.mp4

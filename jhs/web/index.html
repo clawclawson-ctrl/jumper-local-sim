@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Jumper Hide &amp; Seek — Local Sim</title>
+<style>
+ body{font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;margin:0;background:#1d1f23;color:#e8e8e8}
+ header{display:flex;align-items:center;gap:14px;padding:10px 18px;background:#111;border-bottom:1px solid #333}
+ header h1{font-size:19px;margin:0} .badge{background:#7a1c1c;color:#ffd0d0;font-weight:700;padding:3px 9px;border-radius:4px;font-size:13px}
+ main{display:flex;gap:18px;padding:16px;flex-wrap:wrap} section{background:#26292e;border:1px solid #3a3d44;border-radius:8px;padding:12px 14px}
+ h2{font-size:15px;margin:0 0 8px} button{background:#3d6fd1;color:#fff;border:0;border-radius:5px;padding:7px 12px;font-size:14px;cursor:pointer;margin:2px}
+ button.sec{background:#4a4f59} button.danger{background:#b23b3b} button:disabled{background:#555;color:#999;cursor:default}
+ select,input{background:#17191c;color:#eee;border:1px solid #555;border-radius:4px;padding:5px;font-size:14px}
+ .muted{color:#9aa0a8;font-size:13px} .err{color:#ff8f8f} .ok{color:#8fe39b} .warn{color:#ffd27f}
+ #canvas{background:#2e3136;border-radius:6px;cursor:pointer;touch-action:none} #live{max-width:100%;border-radius:6px;background:#000;display:block}
+ table{border-collapse:collapse;font-size:13px} td,th{padding:3px 8px;border-bottom:1px solid #3a3d44;text-align:left}
+ .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:6px 0} pre{white-space:pre-wrap;font-size:12px;color:#bbb;max-height:180px;overflow:auto;background:#17191c;padding:6px;border-radius:4px}
+ .bar{height:10px;background:#17191c;border-radius:5px;overflow:hidden;width:320px} .bar>div{height:100%;background:#3d6fd1;width:0}
+</style></head><body>
+<header><h1>Jumper Hide &amp; Seek — Local Sim</h1><span class="badge">SIM-ONLY VISION CONCEPT</span>
+<span class="muted">camera + dToF come from the simulator; not real-robot capable. Runs only on this computer.</span></header>
+<main>
+<section style="flex:1 1 100%">
+ <h2>1 · App</h2>
+ <div class="row"><select id="appsel" style="min-width:380px"></select>
+  <button class="sec" onclick="document.getElementById('upl').click()">Load an .app file…</button>
+  <input type="file" id="upl" accept=".app,application/zip" style="display:none" onchange="uploadApp(this.files[0])">
+  <button class="sec" onclick="pickApp()">Choose with a file dialog…</button></div>
+ <div id="appinfo" class="muted"></div>
+</section>
+
+<section id="setup" style="display:none">
+ <h2>2 · Place the toys and the crab, then Start</h2>
+ <div class="muted" id="flynote" style="display:none"><b>flybrain:</b> no task and no score — the crab wanders on its own with fly-inspired rules
+ (looming escape, avoidance, fixate/approach salient blobs, optomotor turns, exploration saccades). Toys you place are things it may fixate on.
+ <span class="warn">SIM-ONLY VISION CONCEPT: fly-inspired rules, not a connectome. Not yet tested in full sim trials.</span><br></div>
+ <div class="muted">Drag the toys (blue ball, yellow ducks), the props and the red crab. Grey = walls, tan = the rug (the gathering area).<br>
+ Double-click a prop to turn it 15°. Red outline = not allowed there. Toys you place in plain view are fine — but then it is not much of a hide &amp; seek.</div>
+ <canvas id="canvas" width="620" height="620"></canvas>
+ <div class="row">Crab heading <input type="range" id="yaw" min="-180" max="180" value="0" oninput="setYaw(this.value)"> <span id="yawv">0°</span>
+  <button class="sec" onclick="crabHome()">Crab to rug centre</button></div>
+ <div class="row"><button class="sec" onclick="randomPlace()">Random hidden placement</button> seed <input id="seed" type="number" value="31" style="width:70px">
+  <button class="sec" onclick="randomHeading()">Random heading</button> <button class="sec" onclick="resetProps()">Props back to their spots</button></div>
+ <div id="checkmsg" class="muted"></div>
+ <div class="row">Run length <select id="tmax"><option value="600">600 s (as in our tests)</option><option value="300">300 s</option><option value="120">120 s</option><option value="1200">1200 s</option></select>
+  Speed <select id="speed"><option value="1">at most 1x real time</option><option value="0">as fast as possible</option></select></div>
+ <div class="row"><label><input type="checkbox" id="pushable" checked> Pushable obstacles</label>
+  <span class="muted">the stairs, planters and crates can be shoved by the crab (walls stay fixed). Off = the map exactly as in our tests.</span></div>
+ <div class="row">Physics <select id="phys"><option value="">1000 Hz (as in our evaluations)</option><option value="200">200 Hz (faster; the rate the walking policies were trained at)</option></select>
+  <label><input type="checkbox" id="livebox" checked> live picture</label></div>
+ <div class="row"><button id="startbtn" onclick="startRun()">Start</button><span id="startmsg"></span></div>
+</section>
+
+<section id="other" style="display:none;max-width:640px">
+ <h2>2 · Run this app</h2><div id="othertext" class="muted"></div>
+ <div class="row" id="mapsel_row">Room <select id="mapsel"><option value="hide_seek">Hide &amp; seek room (v7)</option><option value="tidy">Tidy-up room</option><option value="">The app's own default world</option></select></div>
+ <div class="row"><button onclick="startOther()">Start</button><span id="othermsg"></span></div>
+</section>
+
+<section id="livesec" style="flex:1 1 640px;display:none">
+ <h2>3 · Live <span id="runname" class="muted"></span></h2>
+ <img id="live" alt="waiting for the first picture (the world takes ~30 s to build)…">
+ <div class="row"><span id="stat" class="muted"></span></div>
+ <div class="row"><button class="danger" id="stopbtn" onclick="stopRun()">Stop</button></div>
+ <div id="donebox" style="display:none">
+  <h2>Save this run as an MP4</h2>
+  <div class="muted">Re-renders the recorded run with the full overlay (camera + boxes, dToF, crab's own map, scorer marked SIM TRUTH, sim clock, SIM-ONLY label) at 1x real speed.</div>
+  <div class="row">Folder <input id="folder" style="width:360px"> Size <select id="size"><option value="1080">1920x1080</option><option value="720">1280x720 (faster)</option></select>
+   <button onclick="saveMp4(curRun)">Save run as MP4</button></div>
+  <details id="audiobox"><summary>Add your own audio (optional — without it the MP4 is silent)</summary>
+   <div class="row">Audio file <input id="apath" style="width:330px" placeholder="none (silent MP4)">
+    <button class="sec" onclick="document.getElementById('aupl').click()">Choose…</button>
+    <input type="file" id="aupl" accept=".mp3,.wav,.m4a,.aac,.aif,.aiff,.flac,audio/*" style="display:none" onchange="uploadAudio(this.files[0])">
+    <button class="sec" onclick="pickAudio()">Finder dialog…</button> <button class="sec" onclick="$('apath').value=''">Clear</button></div>
+   <div class="row">Start the song at <input id="astart" type="number" value="0" min="0" step="0.5" style="width:60px"> s ·
+    song begins <input id="adelay" type="number" value="0" min="0" step="0.5" style="width:60px"> s into the video ·
+    volume <input id="avol" type="number" value="100" min="0" max="400" step="10" style="width:60px"> % ·
+    fade-out <input id="afade" type="number" value="3" min="0" step="0.5" style="width:55px"> s</div>
+   <div class="row">If the song is shorter than the video: <select id="aloop"><option value="0">play once, then silence</option><option value="1">loop it</option></select>
+    <span class="muted">It is always cut at the end of the video. The video itself stays 1x and unchanged (AAC 192k audio is added).</span></div>
+   <div id="amsg" class="muted"></div>
+  </details>
+  <div class="row"><div class="bar"><div id="rbar"></div></div><span id="rmsg" class="muted"></span><button class="sec" id="reveal" style="display:none" onclick="reveal()">Show in Finder</button></div>
+ </div>
+ <pre id="log"></pre>
+</section>
+
+<section style="flex:1 1 100%"><h2>Previous runs</h2><div id="runs" class="muted">none yet</div></section>
+</main>
+<script>
+const $=id=>document.getElementById(id); let ROOM=null, APPS=[], INFO={}, curRun=null, lastOut=null, poll=null, rpoll=null;
+const COL={ball:'#3c8cff',duck:'#ffcd28',duck2:'#ffcd28'}; const LBL={ball:'ball',duck:'duck',duck2:'duck 2'};
+let toys={ball:[2.07,-0.53],duck:[-1.97,0.49],duck2:[0.46,-2.06]}, crab=[0,0,0], errs={}, notes={}, visible={}; let moves={};
+async function api(p,b){const r=await fetch(p,b===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});return r.json();}
+function app(){return APPS.find(a=>a.path===$('appsel').value);}
+async function init(){INFO=await api('/api/info'); ROOM=await api('/api/room'); $('folder').value=INFO.movies; await loadApps(INFO.preselect); draw(); check(); runsList(); if(INFO.running){curRun=INFO.running; showLive();}}
+async function loadApps(sel){APPS=await api('/api/apps'); const s=$('appsel'); s.innerHTML='';
+ for(const a of APPS){const o=document.createElement('option'); o.value=a.path; o.textContent=(a.ok?'':'✗ ')+a.name+(a.kind?'  ['+({hide_seek:'hide & seek, vision brain',tidy_vision:'tidy-up, vision brain',flybrain:'flybrain: fly-inspired rules, sim-only',official:'plain app: you drive'}[a.kind])+']':''); s.appendChild(o);}
+ if(!sel){const hs=APPS.find(a=>a.kind==='hide_seek'&&a.local_hooks); if(hs) sel=hs.path;} if(sel) s.value=sel; s.onchange=appChanged; appChanged();}
+function appChanged(){const a=app(); if(!a){$('appinfo').textContent='no apps yet: load one';return;}
+ $('appinfo').innerHTML=a.ok?`<b>${a.title}</b> · ${a.modes.length} modes · controller: ${a.controller}`+(a.sim_only?' · <span class="warn">SIM-ONLY VISION CONCEPT</span>':'')+(a.warning?`<br><span class="warn">${a.warning}</span>`:''):`<span class="err">${a.error}</span>`;
+ const room=a.ok&&((a.kind==='hide_seek'&&a.local_hooks)||a.kind==='flybrain');
+ $('setup').style.display=room?'':'none'; $('flynote').style.display=(a.kind==='flybrain')?'':'none';
+ if(a.kind==='flybrain'&&$('tmax').dataset.kind!=='fly'){$('tmax').value='120';} if(a.kind!=='flybrain'&&$('tmax').dataset.kind==='fly'){$('tmax').value='600';} $('tmax').dataset.kind=a.kind==='flybrain'?'fly':'hs';
+ const other=a.ok&&!room; $('other').style.display=other?'':'none';
+ $('mapsel_row').style.display=a.kind==='official'?'':'none';
+ $('othertext').innerHTML=a.kind==='official'?'A plain app has no vision brain: you drive the crab yourself in MuJoCo\'s 3D window (keyboard: the app\'s own keys, printed in the Terminal; a gamepad works too). Close the window to stop.':
+   a.kind==='tidy_vision'?'EXPERIMENTAL: the tidy-up vision brain runs on the shipped tidy-up room with its own toy layout. No hand placement, no live picture and no MP4 for this one; progress shows in the log.':
+   'This hide & seek app is older than the local-sim hooks: random hidden toys, no live picture. You can still save the MP4 afterwards.';}
+async function uploadApp(f){if(!f)return; $('appinfo').textContent='loading '+f.name+' …'; const r=await fetch('/api/upload',{method:'POST',headers:{'X-Filename':f.name},body:f}); const i=await r.json();
+ if(!i.ok){$('appinfo').innerHTML='<span class="err">'+(i.error||'failed')+'</span>';return;} await loadApps(i.path);}
+async function pickApp(){const i=await api('/api/pick',{}); if(i.ok) await loadApps(i.path); else $('appinfo').innerHTML='<span class="muted">'+(i.error||'')+'</span>';}
+// ---------- room drawing ----------
+const C=()=>$('canvas'), PAD=12; function sc(){return (C().width-2*PAD)/(ROOM.room[2]-ROOM.room[0]);}
+function w2c(x,y){return [PAD+(x-ROOM.room[0])*sc(), PAD+(ROOM.room[3]-y)*sc()];} function c2w(px,py){return [ROOM.room[0]+(px-PAD)/sc(), ROOM.room[3]-(py-PAD)/sc()];}
+function draw(){if(!ROOM)return; const g=C().getContext('2d'), s=sc(); g.clearRect(0,0,C().width,C().height);
+ g.fillStyle='#3a3e44'; const [a0,b0]=w2c(ROOM.room[0],ROOM.room[3]); g.fillRect(a0,b0,(ROOM.room[2]-ROOM.room[0])*s,(ROOM.room[3]-ROOM.room[1])*s);
+ const r=ROOM.rug; g.fillStyle='#b8925f'; const [r0,r1]=w2c(r[0]-r[2],r[1]+r[3]); g.fillRect(r0,r1,2*r[2]*s,2*r[3]*s); g.fillStyle='#5a4426'; g.font='12px sans-serif'; g.fillText('rug (gathering area)',r0+6,r1+16);
+ const B=boxes();
+ for(const b of B){const [cx,cy]=w2c(b.c[0],b.c[1]); g.save(); g.translate(cx,cy); g.rotate(-Math.atan2(b.R[2],b.R[0])); g.fillStyle=b.wall?'#888':'#9aa1ab'; g.fillRect(-b.h[0]*s,-b.h[1]*s,2*b.h[0]*s,2*b.h[1]*s); g.restore();
+   if(!b.wall){const t=b.label.replace('the ',''), small=Math.min(b.h[0],b.h[1])<0.2; g.font='11px sans-serif'; g.fillStyle=small?'#c9ced6':'#222';
+     g.fillText(t,cx-g.measureText(t).width/2,small?cy+Math.hypot(b.h[0],b.h[1])*s+12:cy+4);
+     if(errs[b.id]){g.strokeStyle='#ff3b3b'; g.lineWidth=4; g.save(); g.translate(cx,cy); g.rotate(-Math.atan2(b.R[2],b.R[0])); g.strokeRect(-b.h[0]*s,-b.h[1]*s,2*b.h[0]*s,2*b.h[1]*s); g.restore();}}}
+ for(const k of Object.keys(toys)){const [x,y]=w2c(...toys[k]); const rr=Math.max(7,ROOM.toyr[k]*s*1.6); g.beginPath(); g.arc(x,y,rr,0,7); g.fillStyle=COL[k]; g.fill();
+   g.lineWidth=errs[k]?4:1.5; g.strokeStyle=errs[k]?'#ff3b3b':'#111'; g.stroke(); g.fillStyle='#fff'; g.font='bold 12px sans-serif'; g.fillText(LBL[k]+(visible[k]?' (in view)':''),x+rr+3,y+4);}
+ const [cx,cy]=w2c(crab[0],crab[1]); const R=ROOM.crab_r*s, yw=crab[2]*Math.PI/180; g.beginPath(); g.arc(cx,cy,R,0,7); g.fillStyle='rgba(220,40,40,.55)'; g.fill(); g.lineWidth=errs.crab?4:1.5; g.strokeStyle=errs.crab?'#ff3b3b':'#fff'; g.stroke();
+ g.beginPath(); g.moveTo(cx,cy); g.lineTo(cx+Math.cos(yw)*R*1.7, cy-Math.sin(yw)*R*1.7); g.lineWidth=3; g.strokeStyle='#fff'; g.stroke(); g.fillStyle='#fff'; g.font='bold 12px sans-serif'; g.fillText('crab',cx-13,cy+R+14);
+ g.fillStyle='#aaa'; g.font='11px sans-serif'; g.fillText('N ↑   (x → east, y ↑ north; 5.3 m square)',PAD+4,PAD+12);}
+let drag=null;
+function boxes(){return ROOM.boxes.map(b=>{if(b.id&&moves[b.id]){const m=moves[b.id]; const yw=(m[2]!=null?m[2]:b.yaw); const a=yw*Math.PI/180, c=Math.cos(a), si=Math.sin(a); return {...b,c:[m[0],m[1]],R:[c,-si,si,c],yaw:yw};} return b;});}
+function hit(px,py){const s=sc(); for(const k of Object.keys(toys)){const [x,y]=w2c(...toys[k]); if(Math.hypot(px-x,py-y)<Math.max(12,ROOM.toyr[k]*s*2)) return k;}
+ const [cx,cy]=w2c(crab[0],crab[1]); if(Math.hypot(px-cx,py-cy)<ROOM.crab_r*s*1.2) return 'crab';
+ for(const b of boxes()){if(b.wall) continue; const [bx,by]=w2c(b.c[0],b.c[1]); const dx=px-bx, dy=py-by, a=Math.atan2(b.R[2],b.R[0]); const ca=Math.cos(a), sa=Math.sin(a);
+  if(Math.abs(dx*ca+dy*sa)<b.h[0]*s+6 && Math.abs(-dx*sa+dy*ca)<b.h[1]*s+6) return 'ob:'+b.id;} return null;}
+function pos(e){const r=C().getBoundingClientRect(); return [(e.clientX-r.left)*C().width/r.width,(e.clientY-r.top)*C().height/r.height];}
+function setup(){const c=C(); c.onpointerdown=e=>{drag=hit(...pos(e)); if(drag) c.setPointerCapture(e.pointerId);};
+ c.onpointermove=e=>{if(!drag)return; let [x,y]=c2w(...pos(e)); x=Math.max(ROOM.room[0],Math.min(ROOM.room[2],x)); y=Math.max(ROOM.room[1],Math.min(ROOM.room[3],y));
+  if(drag==='crab'){crab[0]=+x.toFixed(3);crab[1]=+y.toFixed(3);}
+  else if(drag.startsWith('ob:')){const id=drag.slice(3); const b=ROOM.boxes.find(q=>q.id===id); moves[id]=[+x.toFixed(3),+y.toFixed(3),(moves[id]&&moves[id][2])||b.yaw];}
+  else toys[drag]=[+x.toFixed(3),+y.toFixed(3)]; draw();};
+ c.onpointerup=e=>{if(drag){drag=null; check();}};
+ c.ondblclick=e=>{const h=hit(...pos(e)); if(h&&h.startsWith('ob:')){const id=h.slice(3); const b=boxes().find(q=>q.id===id); moves[id]=[b.c[0],b.c[1],((b.yaw+15+180)%360)-180]; draw(); check();}};}
+function setYaw(v){crab[2]=+v; $('yawv').textContent=v+'°'; draw();} function crabHome(){crab[0]=0;crab[1]=0;draw();check();}
+function resetProps(){moves={}; draw(); check();}
+function randomHeading(){const v=Math.round(Math.random()*360-180); $('yaw').value=v; setYaw(v);}
+async function check(){const a=app(); const r=await api('/api/check',{toys,start:crab,app:a&&a.path,moves}); errs=r.errors||{}; notes=r.notes||{}; visible=r.visible||{}; draw();
+ const parts=[]; for(const [k,v] of Object.entries(errs)){const b=ROOM.boxes.find(q=>q.id===k); parts.push(`<span class="err">${b?b.label:(k==='crab'?'crab':LBL[k])}: ${v}</span>`);}
+ for(const [k,v] of Object.entries(notes)) parts.push(`<span class="warn">${LBL[k]}: ${v}</span>`);
+ const inview=Object.keys(visible).filter(k=>visible[k]); if(inview.length) parts.push(`<span class="warn">in plain view from the crab's start: ${inview.map(k=>LBL[k]).join(', ')}</span>`);
+ if(!parts.length) parts.push('<span class="ok">layout OK — every toy hidden from the start spot</span>');
+ if(app()&&app().kind==='flybrain'&&r.ok) parts.splice(0,parts.length,'<span class="ok">layout OK</span>');
+ $('checkmsg').innerHTML=parts.join(' · '); $('startbtn').disabled=!r.ok;}
+async function randomPlace(){const a=app(); const r=await api('/api/random',{app:a&&a.path,seed:+$('seed').value,start:crab,moves});
+ if(!r.ok){$('checkmsg').innerHTML='<span class="err">'+r.error+'</span>';return;} toys=r.toys; draw(); check();}
+// ---------- run ----------
+async function startRun(){const a=app(); $('startmsg').textContent='starting…';
+ const r=await api('/api/start',{app:a.path,toys,start:crab,moves,pushable:$('pushable').checked,seed:+$('seed').value,tmax:+$('tmax').value,speed:+$('speed').value,physics_hz:$('phys').value?+$('phys').value:null,live:$('livebox').checked});
+ if(!r.ok){$('startmsg').innerHTML='<span class="err">'+(r.error||'failed')+'</span>';return;} $('startmsg').textContent=''; curRun=r.run; showLive();}
+async function startOther(){const a=app(); const r=await api('/api/start',{app:a.path,map:$('mapsel').value,seed:+$('seed').value});
+ if(!r.ok){$('othermsg').innerHTML='<span class="err">'+(r.error||'failed')+'</span>';return;} $('othermsg').textContent=r.kind==='official'?'MuJoCo window opening (takes ~30 s)…':''; curRun=r.run; showLive();}
+function showLive(){$('livesec').style.display=''; $('donebox').style.display='none'; $('runname').textContent=curRun; $('stopbtn').disabled=false; clearInterval(poll); poll=setInterval(tick,700); tick();}
+async function tick(){const s=await api('/api/status?run='+encodeURIComponent(curRun)); if(s.error&&!s.run){return;}
+ const im=new Image(); im.onload=()=>{$('live').src=im.src;}; im.src='/api/live.jpg?run='+encodeURIComponent(curRun)+'&t='+Date.now();
+ let t=`sim t = ${s.t!=null?(+s.t).toFixed(1):'…'} s`; if(s.rate) t+=` · ${(+s.rate).toFixed(2)}x real time`; if(s.state) t+=` · ${s.state}`;
+ if(s.kind==='fly'||s.kind==='flybrain'){if(s.sub) t+=` (${s.sub})`; if(s.counts) t+=' · '+Object.entries(s.counts).filter(([k,v])=>v).map(([k,v])=>k+' '+v).join(', ');}
+ if(s.ntoys) t+=` · crab's own count ${s.gathered}/${s.ntoys} · scorer (SIM TRUTH, not used by the crab) ${s.n_truth}/${s.ntoys}`;
+ $('stat').textContent=t; $('log').textContent=s.log_tail||'';
+ if(!s.running){clearInterval(poll); $('stopbtn').disabled=true;
+  const R=s.result; let msg=(R&&R.kind==='flybrain')?`finished: ${R.t_end} s sim, falls ${R.falls}, walked ${R.path_m} m · behaviours: `+Object.entries(R.counts||{}).map(([k,v])=>k+' '+v).join(', ')+(R.props_moved_m?' · props moved: '+(Object.entries(R.props_moved_m).filter(([k,v])=>v>=0.01).map(([k,v])=>k+' '+v.toFixed(2)+' m').join(', ')||'none'):'')+' <span class="warn">(SIM-ONLY, fly-inspired rules)</span>':(s.result&&s.result.n_correct!=null)?`finished: sorted into the right bin ${s.result.n_correct}/${s.result.n_toys} (SIM TRUTH), falls ${s.result.falls}`:s.result?`finished: found ${s.result.n_found}/${s.result.n_toys}, on the rug ${s.result.n_gathered}/${s.result.n_toys} (SIM TRUTH)`+(s.result.t_all_gathered!=null?`, all on the rug at ${s.result.t_all_gathered} s`:'')+`, falls ${s.result.falls}`+(s.result.props_moved_m?' · props moved by the crab: '+Object.entries(s.result.props_moved_m).filter(([k,v])=>v>=0.01).map(([k,v])=>k+' '+v.toFixed(2)+' m').join(', '):''):(s.exit_code? 'stopped with an error — see the log':'stopped');
+  $('stat').innerHTML=msg; if(s.can_save_mp4) $('donebox').style.display=''; runsList();}}
+async function stopRun(){await api('/api/stop',{run:curRun}); $('stat').textContent='stopping (it saves the recording first)…';}
+async function uploadAudio(f){if(!f)return; $('amsg').textContent='copying '+f.name+' …'; const r=await fetch('/api/upload_audio',{method:'POST',headers:{'X-Filename':f.name},body:f}); const i=await r.json();
+ if(!i.ok){$('amsg').innerHTML='<span class="err">'+(i.error||'failed')+'</span>';return;} $('apath').value=i.path; $('amsg').textContent='audio: '+i.name;}
+async function pickAudio(){const i=await api('/api/pick_audio',{}); if(i.ok){$('apath').value=i.path; $('amsg').textContent='audio: '+i.name;} else $('amsg').textContent=i.error||'';}
+function audioOpts(){const p=$('apath').value.trim(); if(!p) return null; return {path:p,start:+$('astart').value||0,delay:+$('adelay').value||0,volume:(+$('avol').value)/100,fade:+$('afade').value||0,loop:$('aloop').value==='1'};}
+async function saveMp4(run){const r=await api('/api/save_mp4',{run,folder:$('folder').value,size:$('size').value,audio:audioOpts()}); if(!r.ok){$('rmsg').innerHTML='<span class="err">'+r.error+'</span>';return;}
+ lastOut=r.out; $('donebox').style.display=''; $('livesec').style.display=''; $('reveal').style.display='none'; clearInterval(rpoll); rpoll=setInterval(rtick,1500); rtick();}
+async function rtick(){const p=await api('/api/render_status?out='+encodeURIComponent(lastOut));
+ if(p.total){$('rbar').style.width=(100*p.done/p.total)+'%'; $('rmsg').textContent=p.finished?`saved ${lastOut} (${p.seconds} s at 1x)`+(p.audio?` · ${p.audio}`:' · silent'):p.muxing?'adding the audio…':`rendering ${p.done}/${p.total} frames`+(p.fps?` · ${p.fps} fps · about ${Math.round((p.eta_s||0)/60)} min left`:'');}
+ else $('rmsg').textContent='building the world for rendering…';
+ if(p.finished){clearInterval(rpoll); $('reveal').style.display='';} else if(p.exit_code){clearInterval(rpoll); $('rmsg').innerHTML='<span class="err">rendering failed — see render_*.log in the run folder</span>';}}
+function reveal(){api('/api/reveal',{path:lastOut});}
+async function runsList(){const rs=await api('/api/runs'); if(!rs.length){$('runs').textContent='none yet';return;}
+ let h='<table><tr><th>run</th><th>result (SIM TRUTH)</th><th></th></tr>'; for(const r of rs){const res=(r.result&&r.result.kind==='flybrain')?`flybrain: ${r.result.t_end} s, falls ${r.result.falls}, path ${r.result.path_m} m`:(r.result&&r.result.n_correct!=null)?`tidy: sorted ${r.result.n_correct}/${r.result.n_toys}, ${r.result.t_end} s`:r.result?`found ${r.result.n_found}/${r.result.n_toys}, on rug ${r.result.n_gathered}/${r.result.n_toys}, ${r.result.t_end} s`:(r.running?'running':'');
+  h+=`<tr><td>${r.run}</td><td>${res}</td><td>${r.can_save_mp4?`<button class="sec" onclick="curRun='${r.run}';saveMp4('${r.run}')">Save as MP4</button>`:''}</td></tr>`;} $('runs').innerHTML=h+'</table>';}
+setup(); init().then(()=>{ if(location.search.includes('selftest=1')) selftest(); });
+// ?selftest=1 : drags a toy, the crab and a prop with synthetic pointer events and reports what the page decided (used by the Linux tests)
+async function selftest(){const out=[]; const c=C(); const r=c.getBoundingClientRect(); const sleep=ms=>new Promise(f=>setTimeout(f,ms));
+ const ev=(type,x,y)=>{const [px,py]=w2c(x,y); c.dispatchEvent(new PointerEvent(type,{clientX:r.left+px*r.width/c.width,clientY:r.top+py*r.height/c.height,pointerId:1,bubbles:true}));};
+ const dragTo=async(a,b)=>{ev('pointerdown',...a); ev('pointermove',...b); ev('pointerup',...b); await check();};
+ await dragTo([0,1.5],[0,0.9]); out.push('planterN->rug: '+JSON.stringify(errs.planterN||'ok')+' start='+($('startbtn').disabled?'disabled':'enabled'));
+ await dragTo([0,0.9],[-0.9,1.6]); out.push('planterN->(-0.9,1.6): '+JSON.stringify(errs.planterN||'ok')+' moves='+JSON.stringify(moves.planterN)+' start='+($('startbtn').disabled?'disabled':'enabled'));
+ await dragTo(toys.ball,[1.6,0.2]); out.push('ball->stairs: '+JSON.stringify(errs.ball||'ok')+' start='+($('startbtn').disabled?'disabled':'enabled'));
+ await dragTo([1.6,0.2],[2.1,0.9]); out.push('ball->(2.1,0.9): '+JSON.stringify(errs.ball||'ok'));
+ await dragTo([0,0],[0,-1.5]); out.push('crab->south planter: '+JSON.stringify(errs.crab||'ok'));
+ await dragTo([0,-1.5],[0.2,0.1]); out.push('crab->(0.2,0.1): '+JSON.stringify(errs.crab||'ok')+' crab='+JSON.stringify(crab));
+ c.dispatchEvent(new MouseEvent('dblclick',{clientX:r.left+w2c(-0.9,1.6)[0]*r.width/c.width,clientY:r.top+w2c(-0.9,1.6)[1]*r.height/c.height,bubbles:true})); await check();
+ out.push('dblclick planterN yaw='+JSON.stringify(moves.planterN)); resetProps(); await check(); out.push('reset moves='+JSON.stringify(moves));
+ const pre=document.createElement('pre'); pre.id='selftest'; pre.textContent='SELFTEST\n'+out.join('\n'); document.body.appendChild(pre);}
+</script></body></html>

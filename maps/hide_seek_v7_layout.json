@@ -1,0 +1,212 @@
+{
+ "title": "Jumper Hide and Seek (SIM-ONLY VISION CONCEPT)",
+ "description": "SIM-ONLY VISION CONCEPT. A walled arena from official pieces: the Shelf-maze map's arena floor material and boundary walls, the Home map's rug as the central gathering area, Plaza planters, Bedroom stair steps and Warehouse crates (one in each corner) as hiding spots. Small Home toys (two yellow ducks in the default game) are hidden behind them at random each run.",
+ "ground": "shelf",
+ "no_floor_tiles": true,
+ "decor": [
+  [
+   "home",
+   "rug",
+   -0.12,
+   0.2
+  ],
+  [
+   "home",
+   "visual_web_9",
+   -0.12,
+   0.2
+  ],
+  [
+   "home",
+   "visual_web_24",
+   -0.12,
+   0.2
+  ],
+  [
+   "home",
+   "visual_web_25",
+   -0.12,
+   0.2
+  ],
+  [
+   "home",
+   "visual_web_26",
+   -0.12,
+   0.2
+  ]
+ ],
+ "pieces": [
+  {
+   "p": "wallY",
+   "x": -0.2,
+   "y": -2.7
+  },
+  {
+   "p": "wallY",
+   "x": 0.2,
+   "y": -2.71
+  },
+  {
+   "p": "wallY",
+   "x": -0.2,
+   "y": 2.7
+  },
+  {
+   "p": "wallY",
+   "x": 0.2,
+   "y": 2.71
+  },
+  {
+   "p": "wallX",
+   "x": -2.7,
+   "y": -0.2
+  },
+  {
+   "p": "wallX",
+   "x": -2.71,
+   "y": 0.2
+  },
+  {
+   "p": "wallX",
+   "x": 2.7,
+   "y": -0.2
+  },
+  {
+   "p": "wallX",
+   "x": 2.71,
+   "y": 0.2
+  },
+  {
+   "p": "stair",
+   "x": 1.6,
+   "y": 0.0,
+   "yaw": 0
+  },
+  {
+   "p": "stair",
+   "x": -1.6,
+   "y": 0.0,
+   "yaw": 0
+  },
+  {
+   "p": "planterN",
+   "x": 0.0,
+   "y": 1.5
+  },
+  {
+   "p": "planterW",
+   "x": 0.0,
+   "y": -1.5,
+   "yaw": 90
+  }
+ ],
+ "props": [
+  [
+   "warehouse",
+   "prop:crate_blue",
+   [
+    1.8,
+    1.8,
+    0.09
+   ],
+   45,
+   "prop:crate_blue"
+  ],
+  [
+   "warehouse",
+   "prop:crate_medium",
+   [
+    1.8,
+    -1.8,
+    0.105
+   ],
+   -45,
+   "prop:crate_medium"
+  ],
+  [
+   "warehouse",
+   "prop:crate_small",
+   [
+    -1.8,
+    -1.8,
+    0.075
+   ],
+   45,
+   "prop:crate_small"
+  ],
+  [
+   "warehouse",
+   "prop:crate_medium",
+   [
+    -1.8,
+    1.8,
+    0.105
+   ],
+   45,
+   "prop:crate_medium_nw"
+  ],
+  [
+   "bedroom",
+   "ball",
+   [
+    0.6,
+    2.2,
+    0.055
+   ],
+   0,
+   "prop:ball"
+  ],
+  [
+   "home",
+   "prop:toy_duck",
+   [
+    1.0,
+    2.2,
+    0.0445
+   ],
+   0,
+   "prop:toy_duck"
+  ],
+  [
+   "home",
+   "prop:mini_football",
+   [
+    1.4,
+    2.2,
+    0.022
+   ],
+   0,
+   "prop:mini_football"
+  ],
+  [
+   "home",
+   "prop:football",
+   [
+    -1.0,
+    2.2,
+    0.075
+   ],
+   0,
+   "prop:football"
+  ],
+  [
+   "home",
+   "prop:toy_duck",
+   [
+    1.0,
+    2.45,
+    0.0445
+   ],
+   0,
+   "prop:toy_duck_2"
+  ]
+ ],
+ "bounds": [
+  -2.65,
+  -2.65,
+  0,
+  2.65,
+  2.65,
+  2
+ ]
+}

@@ -1,0 +1,13 @@
+flybrain.app reuses the official Jumper locomotion policy and its contract.
+
+Source: KingKongRobotics/jumper
+  models/locomotion.onnx and locomotion.json from the jumper-tidy-up bundle
+  (portal app shipped with this workspace), exported from checkpoint
+  logs/jumper/jumper.posture/2026-09-29_11-14-01/model_74800.pt
+License: Apache License 2.0 (see /workspace/jumper/LICENSE)
+Copyright: KingKong Robotics (the Jumper repository's authors; the LICENSE
+  appendix is the standard Apache boilerplate and does not name a year).
+
+The mode is renamed flybrain. The freeze state, the manual wording, and
+sim_only_flybrain.py are local additions. The ONNX weights are not modified.
+This is not a FlyWire or Drosophila connectome.
