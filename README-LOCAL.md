@@ -389,6 +389,16 @@ starts when both crabs are within 0.15 m and 15° of their spots; after 25 s the
 does a longer celebration (bow + crab dance) and the overlay shows e.g. "RED WINS 3-1". The match length is a cap: when time runs out
 the higher score wins ("... (time)") or it is a draw. The match clock is paused during celebrations and the walk back.
 
+**Exploring and pushing (brain v2):** a crab that cannot find the ball after a full scan **EXPLOREs** like the hide & seek crab:
+it keeps a searched-floor grid filled from its own camera view (blocked by obstacles it has sensed with its dToF; floor counts as
+unseen again after 25 s because the ball moves), picks the next best viewpoint (most unseen floor, unseen floor behind obstacles
+counts double, minus walking distance), walks there on an A* path and scans again; it goes back to ball play as soon as its camera
+detects the ball. When **Pushable obstacles** is on, the brain is told so (prior knowledge: every obstacle on this field is an
+official prop and all of them are pushable); obstacle positions still come only from its own dToF. In A*, cells of sensed obstacles
+then cost extra instead of being blocked (walls and goals stay blocked), so if the way round is much longer or closed the crab walks
+through and shoves the prop (**PUSHING OBSTACLE**). It also shoves a prop that sits on the spot behind the ball it needs, e.g.
+when the ball is stuck against it. With fixed obstacles, sensed obstacles are blocked.
+
 **Obstacles may go anywhere** inside the field: goal mouths, the centre spot, kickoff spots, against the walls. The only hard rule
 is that an obstacle must be inside the boundary. Overlaps with a crab, the ball or another obstacle give a yellow WARNING but do not
 block Start: the ball or crab then starts on the nearest free spot, and a pushable obstacle that overlaps another is lifted so it drops

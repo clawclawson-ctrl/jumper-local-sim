@@ -163,7 +163,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
     mujoco.mj_forward(_m, _l)
     set_ball(BALL0)
     rng = np.random.default_rng(SEED)
-    brains = {k: SB.Brain(k, np.random.default_rng(SEED * 31 + i)) for i, k in enumerate(("A", "B"))}
+    brains = {k: SB.Brain(k, np.random.default_rng(SEED * 31 + i), pushable=os.environ.get("SC_PUSHABLE", "1") == "1") for i, k in enumerate(("A", "B"))}
     for b in brains.values(): b.reset(kickoff=True, t=0.0); b.ball = np.array(BALL0)
     HOOK = None
     if os.environ.get("SC_LIVE", "0") == "1" or os.environ.get("JHS_LIVE_DIR"):
@@ -286,7 +286,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                         cele = Celebration(t, modes[scorer], win); pending = ("celebrate", None, scorer)
                     elif t - last_active > DROP_AFTER:
                         drops += 1; c = bxy * 0.7; c[1] = float(np.clip(c[1], -F.FY + 0.3, F.FY - 0.3))
-                        c = c + rng.uniform(-0.1, 0.1, 2)
+                        c = c + rng.uniform(-0.1, 0.1, 2); c = np.array(F.free_spot(float(c[0]), float(c[1]), cur_props(), F.BALL_R + 0.05))
                         set_ball(c); last_active = t; ref_line = f"referee drop-ball at {t:.0f}s (ball idle {DROP_AFTER:.0f} s)"
                         ev("drop_ball", at=[round(float(v), 2) for v in c])
                 elif pending[0] == "celebrate":

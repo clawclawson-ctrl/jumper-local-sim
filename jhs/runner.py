@@ -123,7 +123,7 @@ def start_soccer(app, setup=None, seed=1, tmax=300.0, speed=1.0, live=True, live
     (rd / "setup.json").write_text(json.dumps(setup, indent=1))
     env = base_env()
     env.update(VS_SEED=str(int(seed)), VS_OUT=str(rd), VS_TMAX=str(float(tmax)), VS_SAVEVIS="1", JHS_SPEED=str(float(speed)), SC_LIVE="1",
-               JHS_LIVE="1" if live else "0", JHS_LIVE_DIR=str(rd / "live"), JHS_STOP=str(rd / "STOP"), SC_SETUP=str(rd / "setup.json"), SC_GOALS=str(max(1, min(10, int(goals_to_win)))),
+               JHS_LIVE="1" if live else "0", JHS_LIVE_DIR=str(rd / "live"), JHS_STOP=str(rd / "STOP"), SC_SETUP=str(rd / "setup.json"), SC_PUSHABLE="1" if pushable else "0", SC_GOALS=str(max(1, min(10, int(goals_to_win)))),
                JHS_LIVE_W=str(live_size[0]), JHS_LIVE_H=str(live_size[1]))
     from .pushable import variant
     scene = variant(MAPS["soccer"], rd / "scene.map", pushable=bool(pushable), moves=setup["props"] or None)

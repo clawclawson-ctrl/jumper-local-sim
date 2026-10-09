@@ -12,7 +12,7 @@ from . import field as F
 TC = {"A": (235, 60, 40), "B": (60, 110, 240)}
 DC = {"ball": (255, 255, 255), "opponent": (255, 120, 255), "goal_red": (255, 90, 70), "goal_blue": (110, 160, 255)}
 STATE = {"kickoff": "kickoff", "search": "looking for the ball", "stage": "getting behind the ball", "dribble": "dribbling",
-         "shoot": "SHOOTING", "defend": "defending", "backoff": "backing off (stuck)", "referee": "referee reset", "celebrate": "GOAL! celebrating", "paused": "paused (goal)", "return": "RETURNING TO KICKOFF"}
+         "shoot": "SHOOTING", "defend": "defending", "backoff": "backing off (stuck)", "referee": "referee reset", "celebrate": "GOAL! celebrating", "paused": "paused (goal)", "return": "RETURNING TO KICKOFF", "explore": "EXPLORE", "push_obst": "PUSHING OBSTACLE"}
 
 
 class SoccerOverlay:

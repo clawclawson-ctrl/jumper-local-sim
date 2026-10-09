@@ -15,6 +15,7 @@ import math
 import numpy as np
 from scipy import ndimage
 from . import vision
+from .explore import Memory
 from .field import FX, FY, GW, BALL_R, ATTACK, wall_clear, goal_centre, own_goal
 
 # the football's top is 13 cm: lets vision range it even when the ball is cut by the image bottom (close, while dribbling)
@@ -95,8 +96,9 @@ def perceive(team, img, selfmask, cam_pos, cam_R, cam, tof, tof_pos, tof_R, tof_
 
 
 class Brain:
-    def __init__(self, team, rng=None):
-        self.team = team; self.dirx = ATTACK[team]
+    def __init__(self, team, rng=None, pushable=False):
+        self.team = team; self.dirx = ATTACK[team]; self.pushable = bool(pushable); self.mem = Memory()
+        self.exp_goal = None; self.exp_path = []; self.exp_t = -1e9
         self.rng = rng or np.random.default_rng(0)
         self.reset(kickoff=False, t=0.0)
         self.counts = {"shots": 0, "touches": 0, "backoffs": 0, "searches": 0, "defend": 0}
@@ -114,6 +116,7 @@ class Brain:
     def observe(self, t, per, pose):
         self.t = t; self.obst = per["obst"]
         x, y, yaw = pose
+        self.mem.t = t; self.mem.add_obstacles(per["obst"], self.ball if t - self.ball_t < 1.5 else None); self.mem.mark_view(pose)
         if per["ball"]:
             pred = self.ball + self.bv * min(1.0, t - self.ball_t) if t - self.ball_t < 2.0 else None
             d = min(per["ball"], key=lambda d: np.linalg.norm(d["xy"] - pred) if pred is not None else d["rng"])
@@ -186,7 +189,13 @@ class Brain:
         if self.opp is not None and self.t - self.opp_t < 3.0 and math.hypot(x - self.opp[0], y - self.opp[1]) < 0.4: return True
         return c in self.ret_occ
 
+    def _ret_blocked_xy(self, x, y):
+        return math.hypot(x - self.ball[0], y - self.ball[1]) < self.RET_CENTRE_R or self._opp_block(x, y)
+
     def plan(self, start, goal):
+        return self.mem.plan(start, goal, self.pushable, self._ret_blocked_xy)
+
+    def plan_old(self, start, goal):
         """A* on my own occupancy (walls = map knowledge, centre circle, obstacles I have seen with dToF, the other crab as I last saw it)."""
         import heapq
         s0, g0 = self._ret_cell(start), self._ret_cell(goal)
@@ -219,12 +228,41 @@ class Brain:
         if dg < 0.12:                                  # on the spot: turn to face the opponent's goal and wait
             e = wrap(sh - yaw); self.sub = "at kickoff spot, waiting" if abs(e) < 0.2 else "turning to face the goal"
             return {"rx": (-1 if e > 0 else 1) * (0.45 + 0.3 * min(1.0, abs(e)))} if abs(e) > 0.12 else {}
+        if self.pushable and self.mem.through_obstacle(self.ret_path):
+            self.state = "push_obst"; self.sub = f"PUSHING OBSTACLE (returning, {dg:.1f} m)"
+        else: self.state = "return"
         if self.t - self.ret_plan_t > 1.0 or not self.ret_path:
             self.ret_path = self.plan(me, goal) or [me, goal]; self.ret_plan_t = self.t
         while len(self.ret_path) > 1 and np.linalg.norm(self.ret_path[0] - me) < 0.25: self.ret_path.pop(0)
         wp = self.ret_path[0] if dg > 0.3 else goal
-        self.sub = f"returning to kickoff ({dg:.1f} m)"
-        return self._drive(pose, wp, face_yaw=sh if dg < 0.35 else None, speed=WALK if dg > 0.4 else 0.3)
+        if self.state == "return": self.sub = f"returning to kickoff ({dg:.1f} m)"
+        return self._drive(pose, wp, face_yaw=sh if dg < 0.35 else None, speed=WALK if dg > 0.4 else 0.3, avoid=self.state == "return")
+
+    # ---- explore (ball not found by scanning) + path following that may shove pushable props ---------------------------
+    def _follow(self, pose, path, goal, label):
+        x, y, yaw = pose; me = np.array([x, y])
+        while len(path) > 1 and np.linalg.norm(path[0] - me) < 0.22: path.pop(0)
+        wp = path[0] if path else goal
+        if self.pushable and self.mem.through_obstacle(path):      # the cheap way is through a pushable prop: walk in and shove it
+            self.state = "push_obst"; self.sub = "PUSHING OBSTACLE (" + label + ")"; self.counts["pushes"] = self.counts.get("pushes", 0) + 1
+            return self._drive(pose, wp, speed=WALK, avoid=False)
+        return self._drive(pose, wp)
+
+    def _explore(self, pose):
+        x, y, yaw = pose; me = np.array([x, y])
+        if self.exp_goal is None or self.t - self.exp_t > 6.0 or np.linalg.norm(self.exp_goal - me) < 0.25:
+            if self.exp_goal is not None and np.linalg.norm(self.exp_goal - me) < 0.25:     # arrived: scan here first
+                self.exp_goal = None; self.scan_acc = 0.0; self.scan_prev = yaw; return {"rx": 0.62}
+            g, _ = self.mem.next_view(me)
+            if g is None: self.mem.seen[:] = -1e9; g, _ = self.mem.next_view(me)       # everything searched: start over
+            self.exp_goal = g if g is not None else np.zeros(2); self.exp_t = self.t
+            self.exp_path = self.mem.plan(me, self.exp_goal, self.pushable, self._opp_block) or [self.exp_goal]
+            self.counts["explores"] = self.counts.get("explores", 0) + 1
+        self.state = "explore"; self.sub = f"EXPLORE: next best view ({self.exp_goal[0]:.1f}, {self.exp_goal[1]:.1f})"
+        return self._follow(pose, self.exp_path, self.exp_goal, "exploring")
+
+    def _opp_block(self, x, y):
+        return self.opp is not None and self.t - self.opp_t < 3.0 and math.hypot(x - self.opp[0], y - self.opp[1]) < 0.4
 
     def _stuck(self, pose, cmd):
         me = np.array(pose[:2]); walking = abs(cmd.get("ly", 0)) + abs(cmd.get("lx", 0)) > 0.12
@@ -272,15 +310,7 @@ class Brain:
                 self.sub = "scan: turning to look for the ball"
                 d = self.ball - me; e = wrap(math.atan2(d[1], d[0]) - yaw) if self.ball_age() < 8 else 1.0
                 return {"rx": (-1 if e > 0 else 1) * 0.62}
-            if self.search_goal is None:
-                cands = [np.array([0.0, 0.0]), np.array([self.dirx * -1.2, 0.0]), np.array([self.dirx * 1.2, 0.0]), np.array([0.0, 0.8]), np.array([0.0, -0.8])]
-                cands = [c for c in cands if np.linalg.norm(c - me) > 0.7]
-                self.search_goal = cands[int(self.rng.integers(len(cands)))]
-            self.sub = "search: walking to look elsewhere"
-            if np.linalg.norm(self.search_goal - me) < 0.25:      # arrived: scan again from here
-                self.scan_acc = 0.0; self.search_goal = None; self.scan_prev = yaw
-                return {"rx": 0.62}
-            return self._drive(pose, self.search_goal)
+            return self._explore(pose)
         b = self.ball.copy(); db = float(np.linalg.norm(b - me))
         # ---- defend: the other crab is clearly closer to the ball ----
         opp_ok = self.opp is not None and t - self.opp_t < 2.0
@@ -331,6 +361,10 @@ class Brain:
             P = b + perp * sgn * 0.40 - u * (0.05 if along > 0.05 else 0.25)
             self.sub = "going round the ball"
             return self._drive(pose, P, face_yaw=math.atan2(b[1] - y, b[0] - x) if db < 0.9 else None, avoid_ball=True)
+        from .explore import cell as _cell
+        if self.pushable and self.mem.occ()[_cell(S)] and self.ball_age() < 2.0:
+            self.state = "push_obst"; self.sub = "PUSHING OBSTACLE to free the ball"; self.counts["pushes"] = self.counts.get("pushes", 0) + 1
+            return self._drive(pose, S, face_yaw=hu if float(np.linalg.norm(S - me)) < 0.4 else None, avoid=False, speed=WALK)
         self.sub = "getting behind the ball"
         n = float(np.linalg.norm(S - me))
         return self._drive(pose, S, face_yaw=hu if n < 0.25 else (math.atan2(b[1] - y, b[0] - x) if db < 1.2 else None), avoid_ball=True,
@@ -373,6 +407,21 @@ def unit():
     assert all(wall_clear(*p) >= 0.19 for p in pth[1:-1]); cmd = br.return_cmd((1.0, 0.05, math.pi))
     assert abs(cmd.get("ly", 0)) + abs(cmd.get("lx", 0)) + abs(cmd.get("rx", 0)) > 0
     br.obst = np.zeros((0, 3)); assert br.return_cmd((-0.42, 0.0, 0.05)) == {}, "on the spot + facing the goal -> wait"
+    from . import explore as X
+    m = X.Memory(); m.t = 100.0
+    m.add_obstacles(np.array([[1.0, y, 0.1] for y in np.arange(-0.6, 0.61, 0.05)]))          # a prop wall at x = 1.0
+    for yaw in np.linspace(-math.pi, math.pi, 24): m.mark_view((0.3, 0.0, yaw))               # scanned all round from (0.3, 0)
+    g, _ = m.next_view(np.array([0.3, 0.0]))
+    assert m.unseen()[X.cell((1.4, 0.0))], "floor right behind the prop must still be unseen"
+    assert g is not None and (g[0] > 1.0 or abs(g[1]) > 0.6), f"next view should look behind the prop, got {g}"
+    out.append(f"explore: floor behind a prop stays unseen, next best view {np.round(g, 2)} ok")
+    m2 = X.Memory(); m2.t = 5.0
+    m2.add_obstacles(np.array([[0.0, y, 0.1] for y in np.arange(-FY + 0.06, FY - 0.05, 0.05)]))    # props across the whole field
+    assert not m2.plan(np.array([-1.0, 0.0]), np.array([1.0, 0.0]), pushable=False), "fixed props across the field -> no path"
+    pth2 = m2.plan(np.array([-1.0, 0.0]), np.array([1.0, 0.0]), pushable=True); assert pth2 and m2.through_obstacle(pth2, k=len(pth2))
+    m3 = X.Memory(); m3.t = 5.0; m3.add_obstacles(np.array([[0.0, y, 0.1] for y in np.arange(-0.2, 0.21, 0.05)]))  # short prop
+    pth3 = m3.plan(np.array([-1.0, 0.0]), np.array([1.0, 0.0]), pushable=True); assert pth3 and not m3.through_obstacle(pth3, k=len(pth3))
+    out.append("push-through costing: blocked field -> shove through a pushable prop; short prop -> walk round ok")
     out.append(f"return to kickoff: A* path {len(pth)} cells round the centre circle, waits on the spot ok")
     return out
 
