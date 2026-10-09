@@ -9,11 +9,15 @@ import numpy as np
 from .field import FX, FY, wall_clear
 
 CELL = 0.1
+# crab footprint measured from the official robot.xml (keyframe pose): foot tips reach 0.236 m from the base centre (0.225 fwd,
+# 0.221 sideways) -> half-span 0.25 m with gait swing; the planner keeps INFL = half-span + 5 cm from walls, goals and obstacles
+CRAB_R = 0.25
+INFL = CRAB_R + 0.05
 NX, NY = int(round(2 * FX / CELL)), int(round(2 * FY / CELL))
 XS = -FX + CELL * (np.arange(NX) + 0.5); YS = -FY + CELL * (np.arange(NY) + 0.5)
 CX, CY = np.meshgrid(XS, YS, indexing="ij")                    # cell centres [NX, NY]
 INSIDE = np.vectorize(wall_clear)(CX, CY) >= 0.0
-WALLBLOCK = np.vectorize(wall_clear)(CX, CY) < 0.2             # map knowledge: too close to a wall / goal frame for a crab
+WALLBLOCK = np.vectorize(wall_clear)(CX, CY) < INFL             # map knowledge: too close to a wall / goal frame for a crab
 HFOV, VIEW_R, SEEN_DECAY, OBST_FORGET = 1.0, 2.6, 25.0, 30.0   # camera half-angle 0.5 rad; floor counts unseen again after 25 s
 PUSH_COST = 6.0                                                # extra cost per cell of a sensed pushable obstacle
 
@@ -33,7 +37,10 @@ class Memory:
             if ball is not None and np.hypot(p[0] - ball[0], p[1] - ball[1]) < 0.16: continue
             if opp is not None and np.hypot(p[0] - opp[0], p[1] - opp[1]) < 0.35: continue    # the other crab is not a prop
             if wall_clear(p[0], p[1]) < 0.06: continue                  # that is the wall itself (map knowledge)
-            i, j = cell(p); self.obst[max(0, i - 1):i + 2, max(0, j - 1):j + 2] = self.t
+            i, j = cell(p); r = int(math.ceil(INFL / CELL))                # inflate by the crab's half-span + margin
+            sl = (slice(max(0, i - r), i + r + 1), slice(max(0, j - r), j + r + 1))
+            near = np.hypot(CX[sl] - p[0], CY[sl] - p[1]) <= INFL
+            self.obst[sl][near] = self.t
 
     def _los(self, ox, oy, tx, ty):
         """bool array: cells (tx, ty) visible from (ox, oy) without crossing a sensed obstacle cell."""
@@ -110,6 +117,14 @@ class Memory:
         path = []; c = g0
         while c is not None: path.append(np.array([XS[c[0]], YS[c[1]]])); c = came[c]
         return path[::-1]
+
+    def clear_line(self, a, b):
+        """segment a->b stays out of inflated obstacle cells and the wall band (for corner cutting)."""
+        occ = self.occ(); n = max(2, int(np.linalg.norm(np.asarray(b) - np.asarray(a)) / 0.05))
+        for f in np.linspace(0, 1, n):
+            c = cell(np.asarray(a) + (np.asarray(b) - np.asarray(a)) * f)
+            if occ[c] or WALLBLOCK[c]: return False
+        return True
 
     def through_obstacle(self, path, k=4):
         occ = self.occ(); return any(occ[cell(p)] for p in path[:k])

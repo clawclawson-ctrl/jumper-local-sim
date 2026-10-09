@@ -162,6 +162,10 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
             if j >= 0 and _m.jnt_type[j] == 0: _l.qpos[_m.jnt_qposadr[j] + 2] += 0.45; print(f"[setup] {k} overlaps another obstacle -> lifted, drops on top")
     mujoco.mj_forward(_m, _l)
     set_ball(BALL0)
+    # log only (SIM TRUTH): crab-body contacts with props / walls / goals ("leg bumps"), counted as contact onsets per crab
+    _pbset = set(pb.values()); _gn = [mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g) or "" for g in range(model.ngeom)]
+    obst_geom = np.array([(_root(model.geom_bodyid[g]) in _pbset) or _gn[g].startswith(("wall_", "corner_", "goal")) for g in range(model.ngeom)])
+    bumps = {"A": 0, "B": 0}; bump_prev = {"A": False, "B": False}
     rng = np.random.default_rng(SEED)
     brains = {k: SB.Brain(k, np.random.default_rng(SEED * 31 + i), pushable=os.environ.get("SC_PUSHABLE", "1") == "1") for i, k in enumerate(("A", "B"))}
     for b in brains.values(): b.reset(kickoff=True, t=0.0); b.ball = np.array(BALL0)
@@ -272,6 +276,14 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                     if near and not near_prev[k]: touches[k] += 1; last_touch = k
                     near_prev[k] = near
                     if near: last_active = t
+                _hit = {"A": False, "B": False}
+                for ci in range(live.ncon):
+                    g1, g2 = live.contact[ci].geom1, live.contact[ci].geom2
+                    for k in ("A", "B"):
+                        if (own_geom[k][g1] and obst_geom[g2]) or (own_geom[k][g2] and obst_geom[g1]): _hit[k] = True
+                for k in ("A", "B"):
+                    if _hit[k] and not bump_prev[k]: bumps[k] += 1
+                    bump_prev[k] = _hit[k]
                 if np.linalg.norm(bv) > 0.04: last_active = t
                 elif t - last_active > 3.0: stuck_s += 10 * dt
                 if pending is None:
@@ -343,7 +355,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
     finally:
         truth.close()
         res = dict(kind="soccer", label="SIM-ONLY VISION CONCEPT", seed=SEED, tmax=TMAX, setup=dict(ball=BALL0, A=START["A"], B=START["B"], props=SETUP.get("props", {})),
-                   t_end=round(step * dt, 2), stopped=stopped, score={"RED": score["A"], "BLUE": score["B"]}, goals=goals, goals_to_win=GOALS_TO_WIN, returns=returns, match_clock_s=round(mt, 1),
+                   t_end=round(step * dt, 2), stopped=stopped, score={"RED": score["A"], "BLUE": score["B"]}, goals=goals, goals_to_win=GOALS_TO_WIN, leg_bumps={F.TEAM[k]: v for k, v in bumps.items()}, returns=returns, match_clock_s=round(mt, 1),
                    winner=F.TEAM.get(winner) if final else None, final=final,
                    own_goals=sum(g["own_goal"] for g in goals), falls={"RED": falls["A"], "BLUE": falls["B"]}, drop_balls=drops,
                    ball_idle_s=round(stuck_s, 1), touches={"RED": touches["A"], "BLUE": touches["B"]},

@@ -15,7 +15,7 @@ import math
 import numpy as np
 from scipy import ndimage
 from . import vision
-from .explore import Memory
+from .explore import Memory, CRAB_R, INFL
 from .field import FX, FY, GW, BALL_R, ATTACK, wall_clear, goal_centre, own_goal
 
 # the football's top is 13 cm: lets vision range it even when the ball is cut by the image bottom (close, while dribbling)
@@ -208,10 +208,10 @@ class Brain:
             if dl @ np.array([vx, vy]) <= 0: continue
             rep -= dl / n * (r - n) / r
         wc = wall_clear(x, y)
-        if wc < 0.25:      # the walls are map knowledge: do not walk into them
+        if wc < INFL:      # the walls are map knowledge: keep my legs (half-span + margin) off them
             gx, gy = -x, -y
             g = np.array([c * gx + s * gy, -s * gx + c * gy]); g /= max(1e-6, np.linalg.norm(g))
-            if g @ np.array([vx, vy]) < 0: rep += g * (0.25 - wc) / 0.25
+            if g @ np.array([vx, vy]) < 0: rep += g * (INFL - wc) / INFL
         if not np.any(rep): return vx, vy
         return vx + 0.9 * rep[0], vy + 0.9 * rep[1]
 
@@ -276,7 +276,7 @@ class Brain:
         else: self.state = "return"
         if self.t - self.ret_plan_t > 1.0 or not self.ret_path:
             self.ret_path = self.plan(me, goal) or [me, goal]; self.ret_plan_t = self.t
-        while len(self.ret_path) > 1 and np.linalg.norm(self.ret_path[0] - me) < 0.25: self.ret_path.pop(0)
+        while len(self.ret_path) > 1 and (np.linalg.norm(self.ret_path[0] - me) < 0.22 or self.mem.clear_line(me, self.ret_path[1])): self.ret_path.pop(0)
         wp = self.ret_path[0] if dg > 0.3 else goal
         if self.state == "return": self.sub = f"returning to kickoff ({dg:.1f} m)"
         return self._drive(pose, wp, face_yaw=sh if dg < 0.35 else None, speed=WALK if dg > 0.4 else 0.3, avoid=self.state == "return")
@@ -284,7 +284,7 @@ class Brain:
     # ---- explore (ball not found by scanning) + path following that may shove pushable props ---------------------------
     def _follow(self, pose, path, goal, label):
         x, y, yaw = pose; me = np.array([x, y])
-        while len(path) > 1 and np.linalg.norm(path[0] - me) < 0.22: path.pop(0)
+        while len(path) > 1 and (np.linalg.norm(path[0] - me) < 0.22 or self.mem.clear_line(me, path[1])): path.pop(0)   # cut corners only with clearance
         wp = path[0] if path else goal
         if self.pushable and self.mem.through_obstacle(path):      # the cheap way is through a pushable prop: walk in and shove it
             self.state = "push_obst"; self.sub = "PUSHING OBSTACLE (" + label + ")"; self.counts["pushes"] = self.counts.get("pushes", 0) + 1
@@ -327,7 +327,7 @@ class Brain:
         for da in (0.0, 0.35, -0.35, 0.7, -0.7, 1.05, -1.05, 1.4, -1.4):
             ca, sa = math.cos(da), math.sin(da); u = np.array([ca * u0[0] - sa * u0[1], sa * u0[0] + ca * u0[1]])
             S = b - u * (BALL_R + 0.30)
-            if wall_clear(*S) < 0.2: continue
+            if wall_clear(*S) < CRAB_R: continue
             sc = float(u @ u0) - 0.05 * abs(da)
             if sc > bs: bs, best = sc, u
         return best
@@ -538,6 +538,12 @@ def unit():
     assert ball_not_crab(dict(bbox=(310, 230, 330, 250), rng=0.85), [crab_]), "kickoff: ball in front of the other crab must be kept"
     assert not ball_not_crab(dict(bbox=(310, 230, 330, 250), rng=1.7), [crab_])
     out.append("kickoff: ball in front of the other crab kept, white part on the crab rejected ok")
+    from . import explore as X2
+    mc = X2.Memory(); mc.t = 1.0; crate = np.array([[0.15 * np.cos(a_), 0.15 * np.sin(a_), 0.1] for a_ in np.linspace(0, 2 * np.pi, 24)])
+    mc.add_obstacles(crate); pc = mc.plan(np.array([-1.0, 0.05]), np.array([1.0, 0.05]), pushable=False)
+    clr = min(float(np.min(np.hypot(crate[:, 0] - q[0], crate[:, 1] - q[1]))) for q in pc)
+    assert pc and clr >= CRAB_R, clr
+    out.append(f"clearance: path round a crate keeps {clr:.2f} m >= half-span {CRAB_R} m ok")
     out.append(f"return to kickoff: A* path {len(pth)} cells round the centre circle, waits on the spot ok")
     return out
 
