@@ -399,6 +399,11 @@ then cost extra instead of being blocked (walls and goals stay blocked), so if t
 through and shoves the prop (**PUSHING OBSTACLE**). It also shoves a prop that sits on the spot behind the ball it needs, e.g.
 when the ball is stuck against it. With fixed obstacles, sensed obstacles are blocked.
 
+**Ball prediction + intercept:** each crab keeps a short track of its own ball detections (position + velocity). If it loses a
+rolling ball it first walks to where the track says the ball rolled to (constant velocity with rolling deceleration, bouncing off the
+walls and rounded corners; up to 4 s, confidence shown in the overlay sub-line), and only scans/explores if the ball is not there.
+While staging it aims for where a rolling ball will be when it arrives (up to 2 s ahead). Turn off with `SOCCER_PREDICT=0`.
+
 **Obstacles may go anywhere** inside the field: goal mouths, the centre spot, kickoff spots, against the walls. The only hard rule
 is that an obstacle must be inside the boundary. Overlaps with a crab, the ball or another obstacle give a yellow WARNING but do not
 block Start: the ball or crab then starts on the nearest free spot, and a pushable obstacle that overlaps another is lifted so it drops

@@ -22,6 +22,27 @@ from .field import FX, FY, GW, BALL_R, ATTACK, wall_clear, goal_centre, own_goal
 vision.CLASSES["football"] = dict(vision.CLASSES["football"], top=2 * BALL_R)
 
 
+PREDICT = __import__("os").environ.get("SOCCER_PREDICT", "1") == "1"    # ball track prediction + intercept (own sensing only)
+BALL_DECEL, WALL_E, PRED_H, INT_H = 0.25, 0.6, 4.0, 2.0                # m/s^2 rolling decel, wall restitution, horizons (s)
+
+
+def predict_ball(p, v, dt, step=0.05):
+    """constant velocity with rolling deceleration; bounces off the field walls (rounded corners via wall_clear's gradient)."""
+    p = np.array(p, float); v = np.array(v, float); tt = 0.0
+    while tt < dt - 1e-9:
+        h = min(step, dt - tt); sp = float(np.linalg.norm(v))
+        if sp < 1e-3: break
+        v *= max(0.0, sp - BALL_DECEL * h) / sp; q = p + v * h
+        if wall_clear(*q) < BALL_R:
+            e = 1e-3; nrm = np.array([wall_clear(q[0] + e, q[1]) - wall_clear(q[0] - e, q[1]), wall_clear(q[0], q[1] + e) - wall_clear(q[0], q[1] - e)])
+            n = nrm / max(1e-9, np.linalg.norm(nrm))                       # inward normal
+            if v @ n < 0: v = (v - (1 + WALL_E) * (v @ n) * n)
+            q = p + v * h
+            if wall_clear(*q) < BALL_R: q = p
+        p = q; tt += h
+    return p, v
+
+
 def wrap(a): return (a + math.pi) % (2 * math.pi) - math.pi
 
 # colour families (render colours: RED crab vermilion/gold, BLUE crab navy/steel; goals the defending team's colour)
@@ -110,7 +131,7 @@ class Brain:
         self.state = "kickoff"; self.sub = ""; self.t = t; self.hold = None; self.hold_until = 0.0
         self.stuck_ref = None; self.scan_acc = 0.0; self.scan_prev = None; self.search_goal = None
         self.shoot_until = 0.0; self.side = 1.0; self.last_cmd = {}; self.wait_until = t + 0.6; self.obst = np.zeros((0, 3))
-        self.target = None; self.searching = False; self.exploring = False; self.scan_t0 = t; self.wd = (t, np.zeros(2))
+        self.target = None; self.bv0 = np.zeros(2); self.pred_fail = False; self.searching = False; self.exploring = False; self.scan_t0 = t; self.wd = (t, np.zeros(2))
 
     # ---- beliefs ----------------------------------------------------------------------------------------------------
     def observe(self, t, per, pose):
@@ -129,13 +150,25 @@ class Brain:
                 v = (z - self.ball) / dtt
                 if np.linalg.norm(v) < 2.5: self.bv = 0.6 * self.bv + 0.4 * v
                 self.ball = 0.5 * (self.ball + self.bv * dtt) + 0.5 * z
-            self.ball_t = t; self.ball_known = True
+            self.ball_t = t; self.ball_known = True; self.bv0 = self.bv.copy(); self.pred_fail = False
         else:
             self.bv *= 0.9
         if per["opp"]:
             d = min(per["opp"], key=lambda d: d["rng"]); self.opp = np.asarray(d["xy"], float); self.opp_t = t
 
     def ball_age(self): return self.t - self.ball_t
+
+    def ball_now(self, extra=0.0):
+        """my ball estimate moved forward to now (+extra s) along its track."""
+        if not PREDICT or float(np.linalg.norm(self.bv0)) < 0.08: return self.ball.copy()
+        return predict_ball(self.ball, self.bv0, min(PRED_H, self.ball_age() + extra))[0]
+
+    def intercept(self, me, speed=0.30):
+        """where the ball will be when I get there (iterate arrival time, horizon INT_H)."""
+        b = self.ball_now(); ta = 0.0
+        for _ in range(4):
+            ta = min(INT_H, float(np.linalg.norm(b - me)) / speed); b = self.ball_now(ta)
+        return b
 
     # ---- helpers --------------------------------------------------------------------------------------------------
     def _drive(self, pose, goal_xy, face_yaw=None, speed=WALK, avoid_ball=False, avoid=True):
@@ -309,7 +342,14 @@ class Brain:
     def _decide(self, pose):
         x, y, yaw = pose; me = np.array([x, y]); t = self.t
         # ---- search ----
-        if self.ball_age() > 2.5:
+        # lost a MOVING ball: go to where my track says it rolled before scanning (up to PRED_H s, confidence decays)
+        if PREDICT and 0.6 < self.ball_age() <= PRED_H and not self.pred_fail and float(np.linalg.norm(self.bv0)) > 0.1:
+            P = self.ball_now(); conf = max(0.0, 1.0 - self.ball_age() / PRED_H)
+            if float(np.linalg.norm(P - me)) < 0.3: self.pred_fail = True          # got there, not reacquired -> search
+            else:
+                self.state = "predict"; self.sub = f"going to the predicted ball ({conf:.0%} sure)"
+                return self._drive(pose, P, avoid_ball=False)
+        if self.ball_age() > 2.5 or (self.pred_fail and self.ball_age() > 0.6):
             # (fix3) one search episode = scan 360 deg once, then EXPLORE (next best view, scan there, explore again ...).
             # Before, _explore set state 'explore' and the next tick saw state != 'search' and restarted the scan: spin forever.
             if not self.searching:
@@ -327,7 +367,7 @@ class Brain:
                 self.exploring = True; self.exp_goal = None
             return self._explore(pose)
         self.searching = False; self.exploring = False
-        b = self.ball.copy(); db = float(np.linalg.norm(b - me))
+        b = self.ball_now(); db = float(np.linalg.norm(b - me))
         # ---- defend: the other crab is clearly closer to the ball ----
         opp_ok = self.opp is not None and t - self.opp_t < 2.0
         if opp_ok:
@@ -370,6 +410,9 @@ class Brain:
             return p
         # stage: get behind the ball (round it, never through it)
         self.state = "stage"
+        if PREDICT and float(np.linalg.norm(self.bv0)) > 0.1 and self.ball_age() < 1.2:      # intercept a rolling ball
+            bi = self.intercept(me); u = self.stage_dir(bi); b = bi; perp = np.array([-u[1], u[0]])
+            rel = me - b; along = float(rel @ u); side = float(rel @ perp); hu = math.atan2(u[1], u[0]); db = float(np.linalg.norm(b - me))
         S = b - u * (BALL_R + 0.26)
         if along > -(BALL_R + 0.12):
             sgn = 1.0 if side >= 0 else -1.0
@@ -471,6 +514,17 @@ def unit():
     assert bz.exploring and bz.exp_goal is not None, sts[-5:]
     assert np.linalg.norm(bz.exp_goal - np.array([-1.93, -1.08])) > 0.5 and np.hypot(P[0] + 1.93, P[1] + 1.08) > 0.5, (bz.exp_goal, P)
     out.append(f"corner + hidden ball: scan ended after {sts.index('explore') if 'explore' in sts else sts.index('push_obst')} ticks -> EXPLORE to {np.round(bz.exp_goal, 2)}, walked {np.hypot(P[0] + 1.93, P[1] + 1.08):.2f} m ok")
+    if PREDICT:
+        bp = Brain("A"); bp.reset(kickoff=None, t=0.0)
+        for i, tt in enumerate((1.0, 1.1, 1.2, 1.3, 1.4)):
+            bp.observe(tt, dict(ball=[dict(xy=np.array([0.0 + 0.04 * i, 0.5]), rng=1.0, bbox=(0, 0, 1, 1))], opp=[], goals=[], obst=np.zeros((0, 3))), (-1.0, 0.0, 0.0))
+        for tt in (1.5, 1.6, 2.4):
+            bp.observe(tt, dict(ball=[], opp=[], goals=[], obst=np.zeros((0, 3))), (-1.0, 0.0, 0.0))
+        bp.decide((-1.0, 0.0, 0.0)); P = bp.ball_now()
+        assert bp.state == "predict" and P[0] > bp.ball[0] + 0.1, (bp.state, P, bp.ball)
+        q, v = predict_ball((FX - 0.3, 0.9), (0.8, 0.0), 1.0); assert v[0] < 0 and q[0] < FX - BALL_R, (q, v)
+        bi = bp.intercept(np.array([-1.0, 0.0])); assert bi[0] > P[0] + 0.05, (bi, P)
+        out.append(f"predict: lost rolling ball -> go to {np.round(P, 2)} (last seen {np.round(bp.ball, 2)}); wall bounce; intercept leads to {np.round(bi, 2)} ok")
     out.append(f"return to kickoff: A* path {len(pth)} cells round the centre circle, waits on the spot ok")
     return out
 
