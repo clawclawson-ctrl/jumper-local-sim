@@ -12,7 +12,7 @@ from . import field as F
 TC = {"A": (235, 60, 40), "B": (60, 110, 240)}
 DC = {"ball": (255, 255, 255), "opponent": (255, 120, 255), "goal_red": (255, 90, 70), "goal_blue": (110, 160, 255)}
 STATE = {"kickoff": "kickoff", "search": "looking for the ball", "stage": "getting behind the ball", "dribble": "dribbling",
-         "shoot": "SHOOTING", "defend": "defending", "backoff": "backing off (stuck)", "referee": "referee reset", "celebrate": "GOAL! celebrating", "paused": "paused (goal)"}
+         "shoot": "SHOOTING", "defend": "defending", "backoff": "backing off (stuck)", "referee": "referee reset", "celebrate": "GOAL! celebrating", "paused": "paused (goal)", "return": "RETURNING TO KICKOFF"}
 
 
 class SoccerOverlay:
@@ -55,7 +55,7 @@ class SoccerOverlay:
         self._cam(img, "B", meta.get("B"), camB, tofB, W - S(22) - S(400), S(150))
         sc = meta.get("score", {"A": 0, "B": 0})
         # scoreboard
-        tl = max(0.0, tmax - t); clock = f"{int(tl // 60)}:{int(tl % 60):02d}"
+        tl = max(0.0, tmax - meta.get("clock", t)); clock = f"{int(tl // 60)}:{int(tl % 60):02d}"
         txt_r, txt_mid, txt_b = "RED", f"{sc.get('A', 0)} - {sc.get('B', 0)}", "BLUE"
         wr, wm, wb = (int(d.textlength(x, font=self.fb)) for x in (txt_r, txt_mid, txt_b))
         tot = wr + wm + wb + S(80); x0 = W // 2 - tot // 2
@@ -102,6 +102,7 @@ class SoccerOverlay:
         d.text((W - cw, H - S(58)), clock, font=self.f2, fill=(240, 240, 240))
         g = None
         if meta.get("final"): g = meta["final"]
+        elif "return" in ((meta.get("A") or {}).get("state", ""), (meta.get("B") or {}).get("state", "")): g = "RETURNING TO KICKOFF"
         elif ref.startswith("GOAL") and "referee" in ((meta.get("A") or {}).get("state", ""), (meta.get("B") or {}).get("state", "")) or \
                 ref.startswith("GOAL") and "celebrate" in ((meta.get("A") or {}).get("state", ""), (meta.get("B") or {}).get("state", "")):
             g = ref.split(" at ")[0] + "!"

@@ -24,6 +24,7 @@ BALL0 = [float(v) for v in (SETUP.get("ball") or [0.0, 0.0])]
 START = {k: [float(v) for v in (SETUP.get(k) or F.KICKOFF[k])] for k in ("A", "B")}
 VW, VH, VIS_DT = 640, 480, 0.1
 GOAL_PAUSE, DROP_AFTER = 1.5, 20.0
+RETURN_TIMEOUT, RET_POS, RET_YAW = 25.0, 0.15, math.radians(15)   # crabs walk back to kickoff; late crab teleported after the timeout
 GOALS_TO_WIN = int(os.environ.get("SC_GOALS", "3"))      # first to this many goals wins (the time limit stays as a cap)
 
 sys.path.insert(0, str(REPO / "scripts"))
@@ -129,11 +130,37 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
         if hasattr(sim, "_gather"): sim._gather()
 
     def place_robot(k, x, y, deg):
-        r = robs[k]; st = r.data.default_root_state.clone(); h = math.radians(deg) / 2
-        st[:, 0] = x + un.scene.env_origins[:, 0]; st[:, 1] = y + un.scene.env_origins[:, 1]
-        st[:, 3:7] = torch.tensor([math.cos(h), 0.0, 0.0, math.sin(h)]); st[:, 7:] = 0
-        r.write_root_state_to_sim(st); r.write_joint_state_to_sim(r.data.default_joint_pos.clone(), torch.zeros_like(r.data.default_joint_vel))
+        """referee teleport: write the crab's free joint straight into the live MjData (like set_ball; the entity
+        write_root_state_to_sim path did not move the crab on the native backend)."""
+        model, live = sim.env_mjdata(0); jn = model.body_jntadr[base[k]]
+        qa, da = model.jnt_qposadr[jn], model.jnt_dofadr[jn]; h = math.radians(deg) / 2
+        live.qpos[qa:qa + 2] = [x, y]; live.qpos[qa + 2] = max(float(live.qpos[qa + 2]), 0.11)
+        live.qpos[qa + 3:qa + 7] = [math.cos(h), 0.0, 0.0, math.sin(h)]; live.qvel[da:da + 6] = 0
+        mujoco.mj_forward(model, live)
+        if hasattr(sim, "_gather"): sim._gather()
 
+    def cur_props():      # referee (SIM TRUTH): obstacles on the field now, {id: (x, y, deg)}
+        model, live = sim.env_mjdata(0); out = {}
+        for k, b in pb.items():
+            x, y = float(live.xpos[b][0]), float(live.xpos[b][1])
+            if abs(x) < F.FX + 0.2 and abs(y) < F.FY + 0.2: out[k] = (x, y, math.degrees(yaw_of(live.xquat[b])))
+        return out
+
+    # spawn sanity (obstacles may go anywhere): ball / crabs that overlap an obstacle start at the nearest free spot; a pushable
+    # obstacle overlapping another one is lifted so it drops on top instead of exploding
+    P0 = {k: tuple(float(c) for c in (list(v) + [0.0])[:3]) for k, v in (SETUP.get("props") or {}).items() if k in F.PROPS}
+    nb = F.free_spot(BALL0[0], BALL0[1], P0, F.BALL_R + 0.03)
+    if tuple(nb) != tuple(BALL0): print(f"[setup] ball overlaps an obstacle -> moved to {nb}"); BALL0[:] = list(nb)
+    for k in ("A", "B"):
+        fx, fy = F.free_spot(START[k][0], START[k][1], P0, 0.26)
+        if (fx, fy) != (START[k][0], START[k][1]):
+            print(f"[setup] {F.TEAM[k]} crab overlaps an obstacle -> starts at ({fx}, {fy})"); START[k] = [fx, fy, START[k][2]]
+    _m, _l = sim.env_mjdata(0); ks = list(P0)
+    for i, k in enumerate(ks):
+        if any(F._box_dist((P0[k][0], P0[k][1]), k2, *P0[k2]) < max(F.PROPS[k][2:]) for k2 in ks[:i]):
+            j = _m.body_jntadr[pb[k]]
+            if j >= 0 and _m.jnt_type[j] == 0: _l.qpos[_m.jnt_qposadr[j] + 2] += 0.45; print(f"[setup] {k} overlaps another obstacle -> lifted, drops on top")
+    mujoco.mj_forward(_m, _l)
     set_ball(BALL0)
     rng = np.random.default_rng(SEED)
     brains = {k: SB.Brain(k, np.random.default_rng(SEED * 31 + i)) for i, k in enumerate(("A", "B"))}
@@ -149,7 +176,18 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
     score = {"A": 0, "B": 0}; goals = []; events = []; falls = {"A": 0, "B": 0}; fallen = {"A": False, "B": False}
     cele = None; final = None; winner = None; end_at = None
     modes = {"A": lambda: pA.fsm.mode, "B": lambda: pB.fsm.mode}
-    settle_until = 1.0
+    settle_until = 1.0; paused_s = 0.0; prev_t = 0.0; returns = []
+    spots = {}
+    def spot_of(k):
+        if k in spots: return spots[k]
+        x0, y0, h0 = F.KICKOFF[k]
+        return (-F.ATTACK[k] * F.KICKOFF_NEAR if k == kicker else x0, y0, h0)
+    def plan_spots():     # referee: ball on the nearest free spot to the centre, each crab's nearest free spot to its kickoff spot
+        spots.clear(); P = cur_props(); bc = F.free_spot(0.0, 0.0, P, F.BALL_R + 0.05)
+        for k in ("A", "B"): x0, y0, h0 = spot_of(k); spots[k] = (*F.free_spot(x0, y0, P, 0.27), h0)
+        if math.hypot(spots["A"][0] - spots["B"][0], spots["A"][1] - spots["B"][1]) < 0.45:
+            spots["B"] = (*F.free_spot(spots["B"][0] + 0.5 * F.ATTACK["A"], spots["B"][1], P, 0.27), spots["B"][2])
+        return bc
     pending = None; kicker = "B"         # A kicks off first (kicker = who conceded last); alternate
     last_active = 0.0; stuck_s = 0.0; drops = 0; prev_ball = np.array(BALL0); touches = {"A": 0, "B": 0}; near_prev = {"A": False, "B": False}
     last_touch = None; ref_line = "kickoff: RED"
@@ -162,13 +200,18 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
         while True:
             t = step * dt
             if end_at is not None and t >= end_at: break
-            if t >= TMAX and final is None:      # time limit (a cap): higher score wins, else a draw
+            if pending is not None and pending[0] in ("celebrate", "return"): paused_s += t - prev_t    # match clock pauses
+            prev_t = t; mt = t - paused_s
+            if mt >= TMAX and final is None:      # time limit (a cap): higher score wins, else a draw
                 winner = "A" if score["A"] > score["B"] else "B" if score["B"] > score["A"] else None
                 final = (f"{F.TEAM[winner]} WINS {score['A']}-{score['B']}" if winner else f"DRAW {score['A']}-{score['B']}") + " (time)"
                 ref_line = f"full time: {final}"; ev("full_time", final=final); end_at = t + 3.0; pending = ("over", 1e9)
+            if step == 2:     # the second crab's init_state is not honoured by the env reset (it spawned at the centre): place both now
+                for k in ("A", "B"): place_robot(k, *START[k])
+                set_ball(BALL0)
             model, live = sim.env_mjdata(0)
             if step % vis_every == 0 and t > 0.3:
-                metas = {}
+                metas = {}; poses = {}
                 for k in ("A", "B"):
                     c_id, t_id = cams[k]
                     rend.update_scene(live, camera=c_id); img = rend.render().copy()
@@ -180,7 +223,9 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                     p = SB.perceive(k, img, selfm, cpos, cR, cam, rngs, tpos, tR, tcam)
                     q = live.xquat[base[k]]; pose = (float(live.xpos[base[k]][0]), float(live.xpos[base[k]][1]), yaw_of(q))   # own pose
                     br = brains[k]; br.observe(t, p, pose)
-                    if pending is None:
+                    poses[k] = pose
+                    if pending is not None and pending[0] == "return": cmds[k] = br.return_cmd(pose)
+                    elif pending is None:
                         try: cmds[k] = br.decide(pose)
                         except Exception as e:      # a brain bug must not end the match: stand still this tick, log it
                             cmds[k] = {}; ev("brain_error", team=F.TEAM[k], error=repr(e)[:200])
@@ -188,8 +233,8 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                     else: cmds[k] = {}
                     PADS[k].set(cmds[k])
                     _cel = pending is not None and pending[0] == "celebrate" and k == pending[2]
-                    metas[k] = dict(state=br.state if pending is None else ("celebrate" if _cel else "paused" if pending[0] == "celebrate" else "referee"),
-                                    sub=br.sub if pending is None else (cele.label if _cel else "standing still while the scorer celebrates" if pending[0] == "celebrate" else "referee reset" if pending[0] == "kickoff" else "full time"),
+                    metas[k] = dict(state=br.state if pending is None or pending[0] == "return" else ("celebrate" if _cel else "paused" if pending[0] == "celebrate" else "referee"),
+                                    sub=br.sub if pending is None or pending[0] == "return" else (cele.label if _cel else "standing still while the scorer celebrates" if pending[0] == "celebrate" else "referee reset" if pending[0] == "kickoff" else "full time"),
                                     pose=[round(v, 3) for v in pose], cmd={a: (round(float(b_), 2) if a != "press" else b_) for a, b_ in cmds[k].items()},
                                     ball=[round(float(v), 3) for v in br.ball] if br.ball_age() < 3.0 else None, ball_age=round(min(br.ball_age(), 99), 1),
                                     opp=[round(float(v), 3) for v in br.opp] if br.opp is not None and t - br.opp_t < 3.0 else None,
@@ -202,7 +247,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                         imageio.imwrite(OUTD / "vis" / f"{k}_{len(vis_meta):05d}.jpg", img[::2, ::2], quality=85)
                         (tofA if k == "A" else tofB).append(rngs.astype(np.float16))
                     if HOOK is not None: HOOK.vision(k, img, rngs)
-                meta = dict(t=round(t, 2), A=metas["A"], B=metas["B"], score=dict(score), ref=ref_line, final=final, goals_to_win=GOALS_TO_WIN,
+                meta = dict(t=round(t, 2), clock=round(mt, 2), A=metas["A"], B=metas["B"], score=dict(score), ref=ref_line, final=final, goals_to_win=GOALS_TO_WIN,
                             ball_truth=[round(float(v), 3) for v in live.xpos[ball_b][:2]])
                 if SAVEVIS: vis_meta.append(meta)
                 if HOOK is not None: HOOK.meta(meta)
@@ -247,7 +292,31 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                 elif pending[0] == "celebrate":
                     if cele.done or t - cele.t0 > 30.0:
                         if winner is not None: end_at = t + 0.5; pending = ("over", 1e9)
-                        else: pending = ("kickoff", t + 0.3)
+                        else:      # ball to the centre (referee); both crabs walk back to their kickoff spots by themselves
+                            bc = plan_spots(); set_ball(bc); last_active = t; last_touch = None
+                            ref_line = "referee: ball to centre" + ("" if bc == (0.0, 0.0) else f" (nearest free spot {bc[0]:.2f}, {bc[1]:.2f})")
+                            ev("ball_to_centre", at=list(bc), spots={F.TEAM[k]: spots[k] for k in spots}); pending = ("return", t, bc)
+                            for k in ("A", "B"): brains[k].begin_return(spot_of(k), t, bc)
+                elif pending[0] == "return":
+                    ok = {}
+                    for k in ("A", "B"):
+                        sx, sy, sh = spot_of(k); x, y, yaw = poses[k]
+                        ok[k] = math.hypot(x - sx, y - sy) < RET_POS and abs(SB.wrap(math.radians(sh) - yaw)) < RET_YAW
+                    late = [k for k in ok if not ok[k]] if t - pending[1] > RETURN_TIMEOUT else None
+                    if all(ok.values()) or late:
+                        for k in (late or []): place_robot(k, *spot_of(k))
+                        if np.linalg.norm(bxy - np.array(pending[2])) > 0.05: set_ball(pending[2]); ev("ball_recentred")
+                        returns.append(dict(t=round(t - pending[1], 1), timeout=[F.TEAM[k] for k in (late or [])]))
+                        last_active = t; last_touch = None
+                        for b in brains.values(): b.reset(kickoff=True, t=t); b.ball = np.array(pending[2], float)
+                        spots.clear()
+                        if late:
+                            ref_line = f"referee reset (timeout): {', '.join(F.TEAM[k] for k in late)} placed on kickoff spot; kickoff {F.TEAM[kicker]}"
+                            ev("referee_reset_timeout", late=[F.TEAM[k] for k in late], kickoff=F.TEAM[kicker]); settle_until = t + 1.0
+                        else:
+                            ref_line = f"both crabs walked back ({t - pending[1]:.1f} s); kickoff {F.TEAM[kicker]} ({score['A']}-{score['B']})"
+                            ev("kickoff_after_return", took=round(t - pending[1], 1), kickoff=F.TEAM[kicker])
+                        pending = None
                 elif pending[0] == "kickoff" and t >= pending[1]:
                     # referee reset: ball to the centre spot, crabs teleported to their kickoff spots
                     other = "A" if kicker == "B" else "B"
@@ -272,7 +341,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
     finally:
         truth.close()
         res = dict(kind="soccer", label="SIM-ONLY VISION CONCEPT", seed=SEED, tmax=TMAX, setup=dict(ball=BALL0, A=START["A"], B=START["B"], props=SETUP.get("props", {})),
-                   t_end=round(step * dt, 2), stopped=stopped, score={"RED": score["A"], "BLUE": score["B"]}, goals=goals, goals_to_win=GOALS_TO_WIN,
+                   t_end=round(step * dt, 2), stopped=stopped, score={"RED": score["A"], "BLUE": score["B"]}, goals=goals, goals_to_win=GOALS_TO_WIN, returns=returns, match_clock_s=round(mt, 1),
                    winner=F.TEAM.get(winner) if final else None, final=final,
                    own_goals=sum(g["own_goal"] for g in goals), falls={"RED": falls["A"], "BLUE": falls["B"]}, drop_balls=drops,
                    ball_idle_s=round(stuck_s, 1), touches={"RED": touches["A"], "BLUE": touches["B"]},

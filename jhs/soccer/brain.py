@@ -169,6 +169,63 @@ class Brain:
         if not np.any(rep): return vx, vy
         return vx + 0.9 * rep[0], vy + 0.9 * rep[1]
 
+    # ---- return to kickoff (after a goal + celebration) ---------------------------------------------------------------
+    RET_CELL, RET_CENTRE_R = 0.1, 0.33       # A* grid; the centre circle (ball on the spot) is blocked while walking back
+
+    def begin_return(self, spot, t, ball_xy=(0.0, 0.0)):
+        """walk back to my kickoff spot (x, y, heading deg) by myself; the referee has put the ball on the centre spot."""
+        self.ret_spot = (float(spot[0]), float(spot[1]), math.radians(spot[2])); self.ret_occ = set(); self.ret_path = []
+        self.ret_plan_t = -1e9; self.state = "return"; self.sub = "returning to kickoff"; self.t = t
+        self.ball = np.array(ball_xy, float); self.bv[:] = 0; self.ball_t = t; self.stuck_ref = None; self.hold = None
+
+    def _ret_cell(self, xy): return (int(round(xy[0] / self.RET_CELL)), int(round(xy[1] / self.RET_CELL)))
+
+    def _ret_blocked(self, c):
+        x, y = c[0] * self.RET_CELL, c[1] * self.RET_CELL
+        if wall_clear(x, y) < 0.2 or math.hypot(x - self.ball[0], y - self.ball[1]) < self.RET_CENTRE_R: return True
+        if self.opp is not None and self.t - self.opp_t < 3.0 and math.hypot(x - self.opp[0], y - self.opp[1]) < 0.4: return True
+        return c in self.ret_occ
+
+    def plan(self, start, goal):
+        """A* on my own occupancy (walls = map knowledge, centre circle, obstacles I have seen with dToF, the other crab as I last saw it)."""
+        import heapq
+        s0, g0 = self._ret_cell(start), self._ret_cell(goal)
+        openq = [(0.0, s0)]; came = {s0: None}; cost = {s0: 0.0}; n = 0
+        while openq and n < 6000:
+            _, c = heapq.heappop(openq); n += 1
+            if c == g0: break
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    if not dx and not dy: continue
+                    nb = (c[0] + dx, c[1] + dy)
+                    if nb != g0 and self._ret_blocked(nb): continue
+                    nc = cost[c] + math.hypot(dx, dy)
+                    if nc < cost.get(nb, 1e9):
+                        cost[nb] = nc; came[nb] = c; heapq.heappush(openq, (nc + math.hypot(nb[0] - g0[0], nb[1] - g0[1]), nb))
+        if g0 not in came: return []
+        path = []; c = g0
+        while c is not None: path.append(np.array([c[0], c[1]], float) * self.RET_CELL); c = came[c]
+        return path[::-1]
+
+    def return_cmd(self, pose):
+        x, y, yaw = pose; me = np.array([x, y]); sx, sy, sh = self.ret_spot; goal = np.array([sx, sy])
+        for p in self.obst[::2]:                       # remember obstacles seen on the way (inflated by my half-size)
+            if np.linalg.norm(p[:2] - self.ball) > self.RET_CENTRE_R + 0.1:
+                c = self._ret_cell(p[:2])
+                for dx in (-2, -1, 0, 1, 2):
+                    for dy in (-2, -1, 0, 1, 2):
+                        if dx * dx + dy * dy <= 5: self.ret_occ.add((c[0] + dx, c[1] + dy))
+        dg = float(np.linalg.norm(goal - me))
+        if dg < 0.12:                                  # on the spot: turn to face the opponent's goal and wait
+            e = wrap(sh - yaw); self.sub = "at kickoff spot, waiting" if abs(e) < 0.2 else "turning to face the goal"
+            return {"rx": (-1 if e > 0 else 1) * (0.45 + 0.3 * min(1.0, abs(e)))} if abs(e) > 0.12 else {}
+        if self.t - self.ret_plan_t > 1.0 or not self.ret_path:
+            self.ret_path = self.plan(me, goal) or [me, goal]; self.ret_plan_t = self.t
+        while len(self.ret_path) > 1 and np.linalg.norm(self.ret_path[0] - me) < 0.25: self.ret_path.pop(0)
+        wp = self.ret_path[0] if dg > 0.3 else goal
+        self.sub = f"returning to kickoff ({dg:.1f} m)"
+        return self._drive(pose, wp, face_yaw=sh if dg < 0.35 else None, speed=WALK if dg > 0.4 else 0.3)
+
     def _stuck(self, pose, cmd):
         me = np.array(pose[:2]); walking = abs(cmd.get("ly", 0)) + abs(cmd.get("lx", 0)) > 0.12
         if self.stuck_ref is None or not walking: self.stuck_ref = (self.t, me); return False
@@ -306,9 +363,17 @@ def unit():
     assert wall_clear(*S) >= 0.2, S; out.append("ball in a rounded corner -> staging spot inside the field ok")
     assert in_goal(FX + 0.07, 0.0) == 1 and in_goal(FX + 0.05, 0.0) == 0 and in_goal(FX + 0.2, 0.5) == 0; out.append("goal line ok")
     assert not [e for e in validate({"ball": [0, 0], "A": list(KICKOFF["A"]), "B": list(KICKOFF["B"]), "props": {}}) if e[0] == "error"]
-    assert [e for e in validate({"ball": [0, 0], "A": list(KICKOFF["A"]), "B": list(KICKOFF["B"]), "props": {"crateNE": [FX - 0.2, 0.0, 0]}}) if e[0] == "error"]
+    _gm = {"ball": [0, 0], "A": list(KICKOFF["A"]), "B": list(KICKOFF["B"]), "props": {"crateNE": [FX - 0.2, 0.0, 0]}}
+    assert not [e for e in validate(_gm) if e[0] == "error"], "obstacles may go anywhere inside the field (e.g. a goal mouth)"
+    assert [e for e in validate(_gm, strict=True) if e[0] == "error"]      # the random layout keeps the goal mouths clear
     lay = random_layout(3); assert lay and not [e for e in validate({"ball": [0, 0], "A": list(KICKOFF["A"]), "B": list(KICKOFF["B"]), "props": lay}) if e[0] == "error"]
     out.append(f"setup validation + random layout ({len(lay)} obstacles) ok")
+    br = Brain("A"); br.begin_return((-0.42, 0.0, 0.0), 0.0); pth = br.plan(np.array([1.0, 0.05]), np.array([-0.42, 0.0]))
+    assert pth and all(math.hypot(*p) >= Brain.RET_CENTRE_R - 1e-6 for p in pth[1:-1]), "return path must go round the centre circle"
+    assert all(wall_clear(*p) >= 0.19 for p in pth[1:-1]); cmd = br.return_cmd((1.0, 0.05, math.pi))
+    assert abs(cmd.get("ly", 0)) + abs(cmd.get("lx", 0)) + abs(cmd.get("rx", 0)) > 0
+    br.obst = np.zeros((0, 3)); assert br.return_cmd((-0.42, 0.0, 0.05)) == {}, "on the spot + facing the goal -> wait"
+    out.append(f"return to kickoff: A* path {len(pth)} cells round the centre circle, waits on the spot ok")
     return out
 
 

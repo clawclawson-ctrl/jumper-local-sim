@@ -76,9 +76,12 @@ def _box_dist(p, k, x, y, yaw_deg):
     return math.hypot(ex, ey)
 
 
-def validate(setup):
+def validate(setup, strict=False):
     """setup = {ball: [x, y], A: [x, y, deg], B: [x, y, deg], props: {id: [x, y, deg]}} -> list of (level, text).
-    level 'error' blocks Start. Goal mouths and both kickoff spots must stay clear of obstacles."""
+    level 'error' blocks Start. Obstacles may go anywhere inside the field (goal mouths, centre, kickoff spots, by the walls);
+    overlaps with a crab, the ball or another obstacle are only warnings (the run nudges spawns apart). strict=True (used by the
+    random layout button) also keeps the goal mouths, the centre and the kickoff spots clear."""
+    E = "error" if strict else "warn"
     out = []
     ball = setup.get("ball") or [0.0, 0.0]
     crabs = {k: setup.get(k) or list(KICKOFF[k]) for k in ("A", "B")}
@@ -97,16 +100,28 @@ def validate(setup):
         lab = PROPS[k][1]
         if any(not inside(p, 0.0) for p in footprint(k, x, y, yd)): out.append(("error", f"{lab}: outside the field or in a wall")); continue
         for name, p, r in keep:
-            if _box_dist(p, k, x, y, yd) < r: out.append(("error", f"{lab}: keep {name} clear"))
-        if _box_dist(ball, k, x, y, yd) < BALL_R + 0.03: out.append(("error", f"{lab}: on the ball"))
+            if strict and _box_dist(p, k, x, y, yd) < r: out.append(("error", f"{lab}: keep {name} clear"))
+        if _box_dist(ball, k, x, y, yd) < BALL_R + 0.03: out.append((E, f"{lab}: on the ball (the ball will be moved to the nearest free spot)"))
         for ck, c in crabs.items():
-            if _box_dist(c, k, x, y, yd) < 0.24: out.append(("error", f"{lab}: on the {TEAM[ck]} crab"))
+            if _box_dist(c, k, x, y, yd) < 0.24: out.append((E, f"{lab}: on the {TEAM[ck]} crab (the crab will start at the nearest free spot)"))
         for k2, v2 in props.items():
             if k2 <= k or k2 not in PROPS: continue
             if any(_box_dist(p, k2, float(v2[0]), float(v2[1]), float(v2[2]) if len(v2) > 2 else 0.0) < 0.02 for p in footprint(k, x, y, yd) + [(x, y)]):
-                out.append(("error", f"{lab} overlaps {PROPS[k2][1]}"))
+                out.append((E, f"{lab} overlaps {PROPS[k2][1]} (pushable: it is dropped on top)"))
         if wall_clear(x, y) < 0.45 and min(PROPS[k][2:]) < 0.2: out.append(("warn", f"{lab}: close to a wall -- the ball may get stuck behind it"))
     return out
+
+
+def free_spot(x, y, props, r):
+    """nearest point to (x, y) at least r from every obstacle footprint ({id: (x, y, deg)}) and from the walls (referee helper)."""
+    def ok(px, py): return wall_clear(px, py) >= r and all(_box_dist((px, py), k, *v) >= r for k, v in props.items() if k in PROPS)
+    if ok(x, y): return (x, y)
+    for ring in range(1, 40):
+        d = 0.05 * ring
+        for i in range(8 * ring):
+            a = 2 * math.pi * i / (8 * ring); px, py = x + d * math.cos(a), y + d * math.sin(a)
+            if ok(px, py): return (round(px, 3), round(py, 3))
+    return (x, y)
 
 
 def random_layout(seed, n=None):
@@ -122,7 +137,7 @@ def random_layout(seed, n=None):
         if a in out: continue
         x, y = r.uniform(0.6, FX - 0.6), r.uniform(-FY + 0.45, FY - 0.45); yd = r.choice([0.0, 0.0, 45.0, 90.0])
         trial = {**out, a: [round(x, 2), round(y, 2), yd], b: [round(-x, 2), round(-y, 2), yd]}
-        if not any(l == "error" for l, _ in validate({"ball": [0, 0], "A": list(KICKOFF["A"]), "B": list(KICKOFF["B"]), "props": trial})):
+        if not any(l == "error" for l, _ in validate({"ball": [0, 0], "A": list(KICKOFF["A"]), "B": list(KICKOFF["B"]), "props": trial}, strict=True)):
             out = trial
     return out
 

@@ -380,10 +380,19 @@ ball.
 
 **Goals, celebrations, winning:** when the ball fully crosses a goal line (referee, SIM TRUTH) the scoring crab celebrates with the
 official app's own moves (a crab dance, ~3 s, pressed through its controller like the hide & seek finish); the other crab stands still.
-Then the referee resets the ball to the centre and both crabs to their kickoff spots (teleport, labelled "referee reset"); the team
-that conceded kicks off. **Goals to win** (setup page, default 3, 1-10; headless `--goals-to-win N`): the first crab to reach it wins,
+Then comes **RETURNING TO KICKOFF**: the referee puts the ball on the centre spot ("referee: ball to centre"; if an obstacle
+sits there, the nearest free spot), and each crab **walks back by itself**: its brain plans an A* path on its own occupancy (walls = map
+knowledge, the centre circle around the ball blocked, obstacles it has seen with its dToF, the other crab where it last saw it), walks
+to its kickoff spot (or the nearest free spot if an obstacle is on it), turns to face the opponent's goal and waits. The next kickoff
+starts when both crabs are within 0.15 m and 15° of their spots; after 25 s the referee teleports only the late crab ("referee reset
+(timeout)"). The team that conceded kicks off. The match clock pauses during the celebration and the walk back. **Goals to win** (setup page, default 3, 1-10; headless `--goals-to-win N`): the first crab to reach it wins,
 does a longer celebration (bow + crab dance) and the overlay shows e.g. "RED WINS 3-1". The match length is a cap: when time runs out
-the higher score wins ("... (time)") or it is a draw. The match clock keeps running during celebrations.
+the higher score wins ("... (time)") or it is a draw. The match clock is paused during celebrations and the walk back.
+
+**Obstacles may go anywhere** inside the field: goal mouths, the centre spot, kickoff spots, against the walls. The only hard rule
+is that an obstacle must be inside the boundary. Overlaps with a crab, the ball or another obstacle give a yellow WARNING but do not
+block Start: the ball or crab then starts on the nearest free spot, and a pushable obstacle that overlaps another is lifted so it drops
+on top. "Random obstacle layout" still keeps the goal mouths, the centre and the kickoff spots clear.
 
 **Field:** built from the official room v7 package (`jhs/soccer/field.py` writes `maps/jumper-soccer-field.map`). It uses the same
 floor (tinted turf green), wall material, football, planters, stairs and crates. The goals are simple coloured walls, and the

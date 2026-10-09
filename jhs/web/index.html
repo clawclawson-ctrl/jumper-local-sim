@@ -205,7 +205,7 @@ function sAdd(){const k=$('spal').value; if(sb.props[k]){ssel=k; sDraw(); return
 function sRemove(){if(ssel&&sb.props[ssel]){delete sb.props[ssel]; ssel=null; $('ssel').textContent='–'; sDraw(); sCheck();}}
 function sClear(){sb.props={}; sDraw(); sCheck();} function sKick(){sb.ball=[0,0]; sb.A=[...SF.kickoff.A]; sb.B=[...SF.kickoff.B]; sDraw(); sCheck();}
 async function sRandom(){const r=await api('/api/soccer_random',{seed:+$('sseed').value}); sb.props=r.props||{}; sDraw(); sCheck();}
-async function sCheck(){const r=await api('/api/soccer_check',{setup:sb}); const m=(r.messages||[]).map(x=>`<span class="${x.level==='error'?'err':'warn'}">${x.text}</span>`);
+async function sCheck(){const r=await api('/api/soccer_check',{setup:sb}); const m=(r.messages||[]).map(x=>`<span class="${x.level==='error'?'err':'warn'}">${x.level==='warn'?'WARNING: ':''}${x.text}</span>`);
  if(!m.length) m.push('<span class="ok">setup OK</span>'); $('scheck').innerHTML=m.join(' · '); $('sstart').disabled=!r.ok;}
 async function sStart(){const a=app(); $('smsg').textContent='starting… (two crabs: the world takes ~40 s to build)';
  const r=await api('/api/start',{app:a.path,setup:sb,pushable:$('spush').checked,seed:+$('smseed').value,tmax:+$('stmax').value,speed:+$('sspeed').value,physics_hz:$('sphys').value?+$('sphys').value:null,live:$('slive').checked,goals_to_win:Math.max(1,Math.min(10,+$('sgoals').value||3))});

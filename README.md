@@ -88,9 +88,10 @@ copy in `prebuilt/` by itself.
 
 - Each crab runs the official walking policy and its own brain ([`jhs/soccer/`](jhs/soccer/)). It sees only its own simulated camera, dToF and pose, never the ball's or the opponent's true position.
 - The brain finds the ball, gets behind it, dribbles and shoots toward the other goal, and defends when the opponent is closer to the ball.
-- The **referee** uses sim truth: it detects goals, keeps score, and does labelled *referee resets* (ball to the centre, crabs to kickoff) after each goal's celebration. It drops the ball if nobody touches it for 20 s.
-- The setup page lets you place the ball, both crabs and optional obstacles (or pick a random layout), and set *Goals to win* (default 3) and a time cap.
-- Test match: RED WINS 3-2, 5 goals from real pushes, 0 own goals, 0 falls. Only a few matches have been tested, so it is still experimental. The brains are simple, with no passing, and the match clock keeps running during celebrations.
+- The **referee** uses sim truth: it detects goals, keeps score, and puts the ball back on the centre spot (or the nearest free spot) after each goal. It drops the ball if nobody touches it for 20 s.
+- After a goal, the scorer celebrates, then **both crabs walk back to their kickoff spots by themselves** (using their own pose and map), face the other goal and wait. The match clock pauses during the celebration and the walk-back. If a crab isn't back within 25 s, the referee moves only that crab, labelled *referee reset (timeout)*.
+- The setup page lets you place the ball, both crabs and **obstacles anywhere inside the field**, including goal mouths, the centre and kickoff spots. Overlaps only show a yellow warning. You can also set *Goals to win* (default 3) and a time cap.
+- Testing so far: a few short matches with real pushed goals and 0 falls. With the walk-back, two returns took about 15 s each, with no timeouts. It is still experimental: the brains are simple, with no passing. In v1.1.0 the crab part of the referee reset didn't actually move the crabs, so its test score isn't comparable. That is fixed in v1.1.1.
 
 ## Real vs sim-only
 
