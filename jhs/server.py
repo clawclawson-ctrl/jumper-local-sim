@@ -80,6 +80,10 @@ class H(BaseHTTPRequestHandler):
                                             preselect=STATE.get("preselect"), running=running_run()))
             if u.path == "/api/apps": return self._send(200, list_apps())
             if u.path == "/api/room": return self._send(200, ROOM.to_json())
+            if u.path == "/api/soccer_field":
+                from .soccer import field as SF
+                return self._send(200, dict(FX=SF.FX, FY=SF.FY, GW=SF.GW, GD=SF.GD, CENTRE_R=SF.CENTRE_R, BALL_R=SF.BALL_R, CORNER_R=SF.CORNER_R, kickoff=SF.KICKOFF,
+                                            props={k: dict(label=v[1], hx=v[2], hy=v[3]) for k, v in SF.PROPS.items()}))
             if u.path == "/api/runs":
                 rs = sorted([d for d in runner.RUNS.glob("2*") if d.is_dir()], reverse=True)[:30]
                 return self._send(200, [dict(runner.run_state(d), running=(STATE["procs"].get(d.name) is not None and STATE["procs"][d.name].poll() is None)) for d in rs])
@@ -148,6 +152,13 @@ class H(BaseHTTPRequestHandler):
                 try: r["visible"] = room.visible_from_start(placement_for(b.get("app")), toys, start)
                 except Exception as e: r["visible_error"] = str(e)  # noqa: BLE001
                 return self._send(200, r)
+            if u.path == "/api/soccer_check":
+                from .soccer import field as SF
+                msgs = SF.validate(b.get("setup") or {})
+                return self._send(200, dict(ok=not any(l == "error" for l, _ in msgs), messages=[dict(level=l, text=t) for l, t in msgs]))
+            if u.path == "/api/soccer_random":
+                from .soccer import field as SF
+                return self._send(200, dict(ok=True, props=SF.random_layout(int(b.get("seed", 1)), b.get("n"))))
             if u.path == "/api/random":
                 start = b.get("start") or [0, 0, 0]
                 toys, hid = random_hidden(ROOM.moved(b.get("moves")), placement_for(b.get("app")), b.get("toyset", ["ball", "duck", "duck2"]), start, int(b.get("seed", 1)))
@@ -173,6 +184,10 @@ class H(BaseHTTPRequestHandler):
                     proc, rd = runner.start_flybrain(info["path"], toys=toys, start=start, seed=int(b.get("seed", 1)), tmax=float(b.get("tmax", 120)),
                                                      speed=float(b.get("speed", 1.0)), live=bool(b.get("live", True)), physics_hz=b.get("physics_hz"),
                                                      pushable=bool(b.get("pushable", True)), moves=moves)
+                elif info.get("kind") == "soccer":
+                    proc, rd = runner.start_soccer(info["path"], setup=b.get("setup"), seed=int(b.get("seed", 1)), tmax=float(b.get("tmax", 300)),
+                                                   speed=float(b.get("speed", 1.0)), live=bool(b.get("live", True)), physics_hz=b.get("physics_hz"),
+                                                   pushable=bool(b.get("pushable", True)), goals_to_win=int(b.get("goals_to_win", 3)))
                 elif info.get("kind") == "tidy_vision":
                     proc, rd = runner.start_tidy(info["path"], seed=int(b.get("seed", 1)), tmax=float(b.get("tmax", 420)))
                 else:
@@ -188,7 +203,7 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": True})
             if u.path == "/api/save_mp4":
                 d = run_dir(b["run"])
-                if not runner.run_state(d)["can_save_mp4"]: return self._send(400, {"error": "this run has no recording to render (still running, or not a hide & seek / flybrain run)"})
+                if not runner.run_state(d)["can_save_mp4"]: return self._send(400, {"error": "this run has no recording to render (still running, or not a hide & seek / flybrain / soccer run)"})
                 folder = b.get("folder") or str(runner.DEFAULT_MOVIES)
                 audio = b.get("audio") or None
                 if audio and audio.get("path"):

@@ -1,0 +1,294 @@
+"""1v1 crab soccer match in the local sim. SIM-ONLY VISION CONCEPT.
+
+    python jhs/soccer/run.py --app jumper_soccer_vision.app --scene RUN/scene.map --backend native --device cpu --headless --steps 999999999
+Env: SC_SETUP (json {ball, A, B, props}), VS_SEED, VS_TMAX (match length, sim s), VS_OUT (run folder), VS_SAVEVIS,
+     SC_LIVE=1 (live view / pacing / Stop via jhs.soccer.live), SC_GOALS (goals to win, default 3), JUMPER_REPO.
+Each crab = the official walking app driven by its own Brain (jhs/soccer/brain.py) through a virtual gamepad, from
+ITS OWN camera + dToF + pose. The REFEREE below is the only code that reads the ball/crab positions from sim truth:
+goals, score, kickoff resets (teleports, labelled 'referee reset'), drop-balls, falls and the match stats."""
+from __future__ import annotations
+import importlib.util, json, math, os, sys, time
+from pathlib import Path
+import numpy as np
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent.parent))
+from jhs.soccer import field as F, brain as SB, world as WD, vision  # noqa: E402
+
+REPO = Path(os.environ.get("JUMPER_REPO", str(HERE.parent.parent / "toolkit")))
+SEED = int(os.environ.get("VS_SEED", "1")); TMAX = float(os.environ.get("VS_TMAX", "300"))
+OUTD = Path(os.environ.get("VS_OUT", "soccer_run")); OUTD.mkdir(parents=True, exist_ok=True)
+SAVEVIS = os.environ.get("VS_SAVEVIS", "1") == "1"
+SETUP = json.load(open(os.environ["SC_SETUP"])) if os.environ.get("SC_SETUP") else {}
+BALL0 = [float(v) for v in (SETUP.get("ball") or [0.0, 0.0])]
+START = {k: [float(v) for v in (SETUP.get(k) or F.KICKOFF[k])] for k in ("A", "B")}
+VW, VH, VIS_DT = 640, 480, 0.1
+GOAL_PAUSE, DROP_AFTER = 1.5, 20.0
+GOALS_TO_WIN = int(os.environ.get("SC_GOALS", "3"))      # first to this many goals wins (the time limit stays as a cap)
+
+sys.path.insert(0, str(REPO / "scripts"))
+_spec = importlib.util.spec_from_file_location("play", REPO / "scripts" / "play.py")
+play = importlib.util.module_from_spec(_spec); sys.modules["play"] = play; _spec.loader.exec_module(play)
+import controller  # noqa: E402
+import tasks  # noqa: E402
+import torch  # noqa: E402
+torch.set_num_threads(int(os.environ.get("VS_THREADS", "2"))); torch.manual_seed(SEED)
+WD.install(tasks, START["A"], START["B"], SEED)
+ap = WD.share_controller()
+
+
+class VirtualPad:
+    connected = True; path = "virtual"
+    def __init__(self, name): self.name = name; self.s = controller.GamepadState()
+    def state(self): return self.s
+    def close(self): pass
+    def set(self, c):
+        btn = set(); hx = hy = 0
+        for part in (c.get("press", "") or "").split("+"):     # the app's own buttons (as the hide & seek brain presses them)
+            if part == "dpad_up": hy = -1
+            elif part == "dpad_down": hy = 1
+            elif part: btn.add(part)
+        self.s = controller.GamepadState(lx=float(c.get("lx", 0)), ly=float(c.get("ly", 0)), rx=float(c.get("rx", 0)), ry=0.0, lt=0.0, rt=0.0,
+                                         hat_x=hx, hat_y=hy, buttons=frozenset(btn))
+
+
+class Celebration:
+    """the scoring crab celebrates with the official app's own moves (the same presses as the hide & seek finish):
+    a goal = crab dance ~3 s; the winning goal = bow, then crab dance ~7 s. Real controller motions only."""
+    def __init__(self, t, mode_of, win):
+        self.mode_of = mode_of; self.t0 = t; self.done = False
+        steps = [("wait", 0.3)]
+        if win: steps += [("press", "dpad_down", 0.2), ("until", "gesture_bow", 3.0), ("until", "locomotion", 12.0), ("wait", 0.4)]
+        steps += [("press", "menu+dpad_up", 0.2), ("until", "dance_crab", 3.0), ("wait", 7.0 if win else 3.0),
+                  ("press", "menu", 0.15), ("until", "locomotion", 6.0), ("wait", 0.5)]
+        self.steps = steps; self.i = 0; self.ts = t; self.label = "celebrating: " + ("bow + crab dance" if win else "crab dance")
+
+    def cmd(self, t):
+        while self.i < len(self.steps):
+            st = self.steps[self.i]
+            if st[0] == "wait" and t - self.ts < st[1]: return {}
+            if st[0] == "press" and t - self.ts < st[2]: return {"press": st[1]}
+            if st[0] == "until" and self.mode_of() != st[1] and t - self.ts < st[2]: return {}
+            self.i += 1; self.ts = t
+        self.done = True; return {}
+PADS = {"A": VirtualPad("virtual pad RED (soccer brain, sim-only)"), "B": VirtualPad("virtual pad BLUE (soccer brain, sim-only)")}
+controller.open = lambda *a, **k: PADS["A"]
+
+
+def yaw_of(q): return math.atan2(2 * (q[0] * q[3] + q[1] * q[2]), 1 - 2 * (q[2] ** 2 + q[3] ** 2))
+
+
+def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None):
+    import mujoco, imageio
+    from scipy import ndimage
+    un = env.unwrapped; sim = un.sim
+    robs = {"A": un.scene["robot"], "B": un.scene["robot2"]}
+    tofs = {"A": un.scene["tof"], "B": un.scene["tof2"]}
+    # robot B into its spawn pose, and its own controller (the same app) on its own pad
+    rb = robs["B"]; rs = rb.data.default_root_state.clone(); rs[:, :3] += un.scene.env_origins
+    rb.write_root_state_to_sim(rs); rb.write_joint_state_to_sim(rb.data.default_joint_pos.clone(), torch.zeros_like(rb.data.default_joint_vel))
+    pB = ap.AppPlayer(ap.open_app(Path(sys.argv[sys.argv.index("--app") + 1])), WD.EnvView(env, rb), pad=PADS["B"])
+    pA = policy
+    mgr = un.action_manager; names_ = list(mgr.active_terms)
+    def both(): pA._apply(); pB._apply()
+    mgr.get_term(names_[0]).apply_actions = both
+    model, live = sim.env_mjdata(0)
+    nsk = WD.skin(model)
+    rmodel = getattr(sim, "render_model", None) or model
+    if rmodel is not model: WD.skin(rmodel)
+    model.vis.global_.offwidth = max(VW, model.vis.global_.offwidth); model.vis.global_.offheight = max(VH, model.vis.global_.offheight)
+    rend = mujoco.Renderer(model, VH, VW)
+    names = [mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, b) or "" for b in range(model.nbody)]
+    def body(suffix):
+        m = [i for i, n in enumerate(names) if n.endswith(suffix)]; return m[0] if m else None
+    def _root(b):
+        while model.body_parentid[b] != 0: b = model.body_parentid[b]
+        return b
+    groot = [names[_root(model.geom_bodyid[g])] for g in range(model.ngeom)]
+    PFX = {"A": "robot/", "B": "robot2/"}
+    own_geom = {k: np.array([n.startswith(p) for n in groot] + [False]) for k, p in PFX.items()}
+    cams = {k: (model.camera(PFX[k] + "onboard").id, model.camera(PFX[k] + "tof").id) for k in PFX}
+    cid, tid = cams["A"]
+    cam = vision.Camera(VW, VH, float(model.cam_fovy[cid]))
+    tw, th = (int(v) for v in model.cam_resolution[tid]); tcam = vision.Camera(tw, th, float(model.cam_fovy[tid]))
+    base = {k: mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, PFX[k] + "base_link") for k in PFX}
+    ball_b = body("prop:football"); bq = model.jnt_qposadr[model.body_jntadr[ball_b]]; bd = model.jnt_dofadr[model.body_jntadr[ball_b]]
+    pb = {k: body(v[0]) for k, v in F.PROPS.items() if body(v[0]) is not None}
+    # tof ray casts only when a vision tick needs them (as in hide & seek)
+    DUE = {"due": True}
+    for s in tofs.values():
+        _k = s.raycast_kernel
+        def _when(*a, _k=_k, _s=s, **kw):
+            if DUE["due"]: _s._force[:] = True; return _k(*a, **kw)
+        s.raycast_kernel = _when
+
+    def set_ball(xy):
+        model, live = sim.env_mjdata(0)
+        live.qpos[bq:bq + 3] = [xy[0], xy[1], F.BALL_R + 0.003]; live.qpos[bq + 3:bq + 7] = [1, 0, 0, 0]; live.qvel[bd:bd + 6] = 0
+        mujoco.mj_forward(model, live)
+        if hasattr(sim, "_gather"): sim._gather()
+
+    def place_robot(k, x, y, deg):
+        r = robs[k]; st = r.data.default_root_state.clone(); h = math.radians(deg) / 2
+        st[:, 0] = x + un.scene.env_origins[:, 0]; st[:, 1] = y + un.scene.env_origins[:, 1]
+        st[:, 3:7] = torch.tensor([math.cos(h), 0.0, 0.0, math.sin(h)]); st[:, 7:] = 0
+        r.write_root_state_to_sim(st); r.write_joint_state_to_sim(r.data.default_joint_pos.clone(), torch.zeros_like(r.data.default_joint_vel))
+
+    set_ball(BALL0)
+    rng = np.random.default_rng(SEED)
+    brains = {k: SB.Brain(k, np.random.default_rng(SEED * 31 + i)) for i, k in enumerate(("A", "B"))}
+    for b in brains.values(): b.reset(kickoff=True, t=0.0); b.ball = np.array(BALL0)
+    HOOK = None
+    if os.environ.get("SC_LIVE", "0") == "1" or os.environ.get("JHS_LIVE_DIR"):
+        from jhs.soccer.live import SoccerHook
+        HOOK = SoccerHook(sim=sim, outd=OUTD, dt=un.step_dt)
+    print(f"[setup] soccer seed={SEED} tmax={TMAX} ball={BALL0} A={START['A']} B={START['B']} props={SETUP.get('props', {})} skins={nsk} "
+          f"cam {VW}x{VH} tof {tw}x{th}", flush=True)
+    dt = float(un.step_dt); vis_every = max(1, round(VIS_DT / dt)); q_every = max(1, round(0.04 / dt))
+    obs = env.get_observations(); step = 0
+    score = {"A": 0, "B": 0}; goals = []; events = []; falls = {"A": 0, "B": 0}; fallen = {"A": False, "B": False}
+    cele = None; final = None; winner = None; end_at = None
+    modes = {"A": lambda: pA.fsm.mode, "B": lambda: pB.fsm.mode}
+    settle_until = 1.0
+    pending = None; kicker = "B"         # A kicks off first (kicker = who conceded last); alternate
+    last_active = 0.0; stuck_s = 0.0; drops = 0; prev_ball = np.array(BALL0); touches = {"A": 0, "B": 0}; near_prev = {"A": False, "B": False}
+    last_touch = None; ref_line = "kickoff: RED"
+    qbuf, qt, vis_meta, tofA, tofB = [], [], [], [], []
+    truth = open(OUTD / "truth.jsonl", "w"); t_wall = time.time(); stopped = False; t = 0.0
+    cmds = {"A": {}, "B": {}}; per = {"A": None, "B": None}
+    def ev(kind, **kw):
+        e = dict(t=round(t, 2), event=kind, **kw); events.append(e); print(f"[ref] {e}", flush=True)
+    try:
+        while True:
+            t = step * dt
+            if end_at is not None and t >= end_at: break
+            if t >= TMAX and final is None:      # time limit (a cap): higher score wins, else a draw
+                winner = "A" if score["A"] > score["B"] else "B" if score["B"] > score["A"] else None
+                final = (f"{F.TEAM[winner]} WINS {score['A']}-{score['B']}" if winner else f"DRAW {score['A']}-{score['B']}") + " (time)"
+                ref_line = f"full time: {final}"; ev("full_time", final=final); end_at = t + 3.0; pending = ("over", 1e9)
+            model, live = sim.env_mjdata(0)
+            if step % vis_every == 0 and t > 0.3:
+                metas = {}
+                for k in ("A", "B"):
+                    c_id, t_id = cams[k]
+                    rend.update_scene(live, camera=c_id); img = rend.render().copy()
+                    rend.enable_segmentation_rendering(); rend.update_scene(live, camera=c_id); seg = rend.render()[..., 0].copy(); rend.disable_segmentation_rendering()
+                    selfm = ndimage.binary_dilation(own_geom[k][np.clip(seg, 0, own_geom[k].size - 1)] & (seg >= 0), iterations=3)
+                    rngs = tofs[k].data.range[0].detach().cpu().numpy().reshape(th, tw)
+                    cpos = live.cam_xpos[c_id].copy(); cR = live.cam_xmat[c_id].reshape(3, 3).copy()
+                    tpos = live.cam_xpos[t_id].copy(); tR = live.cam_xmat[t_id].reshape(3, 3).copy()
+                    p = SB.perceive(k, img, selfm, cpos, cR, cam, rngs, tpos, tR, tcam)
+                    q = live.xquat[base[k]]; pose = (float(live.xpos[base[k]][0]), float(live.xpos[base[k]][1]), yaw_of(q))   # own pose
+                    br = brains[k]; br.observe(t, p, pose)
+                    if pending is None:
+                        try: cmds[k] = br.decide(pose)
+                        except Exception as e:      # a brain bug must not end the match: stand still this tick, log it
+                            cmds[k] = {}; ev("brain_error", team=F.TEAM[k], error=repr(e)[:200])
+                    elif pending[0] == "celebrate" and k == pending[2]: cmds[k] = cele.cmd(t)
+                    else: cmds[k] = {}
+                    PADS[k].set(cmds[k])
+                    _cel = pending is not None and pending[0] == "celebrate" and k == pending[2]
+                    metas[k] = dict(state=br.state if pending is None else ("celebrate" if _cel else "paused" if pending[0] == "celebrate" else "referee"),
+                                    sub=br.sub if pending is None else (cele.label if _cel else "standing still while the scorer celebrates" if pending[0] == "celebrate" else "referee reset" if pending[0] == "kickoff" else "full time"),
+                                    pose=[round(v, 3) for v in pose], cmd={a: (round(float(b_), 2) if a != "press" else b_) for a, b_ in cmds[k].items()},
+                                    ball=[round(float(v), 3) for v in br.ball] if br.ball_age() < 3.0 else None, ball_age=round(min(br.ball_age(), 99), 1),
+                                    opp=[round(float(v), 3) for v in br.opp] if br.opp is not None and t - br.opp_t < 3.0 else None,
+                                    dets=[dict(cls="ball", bbox=d["bbox"], rng=round(d["rng"], 2)) for d in p["ball"]] +
+                                         [dict(cls="opponent", bbox=d["bbox"], rng=round(d["rng"], 2)) for d in p["opp"]] +
+                                         [dict(cls="goal_" + ("red" if d["team"] == "A" else "blue"), bbox=d["bbox"], rng=round(d["rng"], 2)) for d in p["goals"]],
+                                    nobst=int(p["obst"].shape[0]))
+                    if SAVEVIS:
+                        (OUTD / "vis").mkdir(exist_ok=True)
+                        imageio.imwrite(OUTD / "vis" / f"{k}_{len(vis_meta):05d}.jpg", img[::2, ::2], quality=85)
+                        (tofA if k == "A" else tofB).append(rngs.astype(np.float16))
+                    if HOOK is not None: HOOK.vision(k, img, rngs)
+                meta = dict(t=round(t, 2), A=metas["A"], B=metas["B"], score=dict(score), ref=ref_line, final=final, goals_to_win=GOALS_TO_WIN,
+                            ball_truth=[round(float(v), 3) for v in live.xpos[ball_b][:2]])
+                if SAVEVIS: vis_meta.append(meta)
+                if HOOK is not None: HOOK.meta(meta)
+            DUE["due"] = (step + 1) % vis_every == 0
+            with torch.inference_mode():
+                pB(None)
+                obs, _, _, _ = env.step(pA(obs))
+            if HOOK is not None and HOOK.step(t) == "stop":
+                stopped = True; print(f"[run] stopped from the local runner at t={t:.1f}s", flush=True); break
+            # ---------------- referee (sim truth) ----------------
+            if step % 10 == 0:
+                model, live = sim.env_mjdata(0)
+                bxy = np.array(live.xpos[ball_b][:2], float); bv = (bxy - prev_ball) / (10 * dt); prev_ball = bxy
+                for k in ("A", "B"):
+                    z = float(live.xpos[base[k]][2]); upz = float(live.xmat[base[k]].reshape(3, 3)[2, 2])
+                    isf = (z < 0.04 or upz < 0.5) and t > settle_until
+                    if isf and not fallen[k]: falls[k] += 1; ev("fall", team=F.TEAM[k], z=round(z, 3))
+                    fallen[k] = isf
+                    near = float(np.linalg.norm(live.xpos[base[k]][:2] - bxy)) < 0.24
+                    if near and not near_prev[k]: touches[k] += 1; last_touch = k
+                    near_prev[k] = near
+                    if near: last_active = t
+                if np.linalg.norm(bv) > 0.04: last_active = t
+                elif t - last_active > 3.0: stuck_s += 10 * dt
+                if pending is None:
+                    side = F.in_goal(*bxy)
+                    if side:
+                        scorer = "A" if side > 0 else "B"; score[scorer] += 1
+                        own = last_touch is not None and last_touch != scorer
+                        goals.append(dict(t=round(t, 1), team=F.TEAM[scorer], own_goal=bool(own), last_touch=F.TEAM.get(last_touch)))
+                        ref_line = f"GOAL {F.TEAM[scorer]}{' (own goal)' if own else ''} at {t:.0f}s"
+                        ev("goal", team=F.TEAM[scorer], own_goal=bool(own), score=dict(score)); kicker = "A" if scorer == "B" else "B"
+                        win = score[scorer] >= GOALS_TO_WIN
+                        if win:
+                            winner = scorer; final = f"{F.TEAM[scorer]} WINS {score['A']}-{score['B']}"; ref_line = final; ev("match_won", final=final)
+                        cele = Celebration(t, modes[scorer], win); pending = ("celebrate", None, scorer)
+                    elif t - last_active > DROP_AFTER:
+                        drops += 1; c = bxy * 0.7; c[1] = float(np.clip(c[1], -F.FY + 0.3, F.FY - 0.3))
+                        c = c + rng.uniform(-0.1, 0.1, 2)
+                        set_ball(c); last_active = t; ref_line = f"referee drop-ball at {t:.0f}s (ball idle {DROP_AFTER:.0f} s)"
+                        ev("drop_ball", at=[round(float(v), 2) for v in c])
+                elif pending[0] == "celebrate":
+                    if cele.done or t - cele.t0 > 30.0:
+                        if winner is not None: end_at = t + 0.5; pending = ("over", 1e9)
+                        else: pending = ("kickoff", t + 0.3)
+                elif pending[0] == "kickoff" and t >= pending[1]:
+                    # referee reset: ball to the centre spot, crabs teleported to their kickoff spots
+                    other = "A" if kicker == "B" else "B"
+                    for k in ("A", "B"):
+                        x0, y0, h0 = F.KICKOFF[k]
+                        if k == kicker: x0 = -F.ATTACK[k] * F.KICKOFF_NEAR
+                        place_robot(k, x0, y0, h0)
+                    set_ball((0.0, 0.0)); last_active = t; last_touch = None
+                    for b in brains.values(): b.reset(kickoff=True, t=t)
+                    ref_line = f"referee reset: kickoff {F.TEAM[kicker]} ({score['A']}-{score['B']})"
+                    ev("referee_reset", kickoff=F.TEAM[kicker]); pending = None; settle_until = t + 1.0
+                    kicker = other if False else kicker
+                if step % 20 == 0:
+                    truth.write(json.dumps({"t": round(t, 2), "ball": [round(float(v), 3) for v in live.xpos[ball_b][:3]],
+                                            **{k: [round(float(v), 3) for v in live.xpos[base[k]][:3]] for k in ("A", "B")},
+                                            **{k: [round(float(v), 3) for v in live.xpos[b][:2]] for k, b in pb.items()}}) + "\n")
+            if step % q_every == 0: qbuf.append(np.array(live.qpos, dtype=np.float64)); qt.append(t)
+            step += 1
+            if step % 2000 == 0:
+                print(f"[run] t={t:.0f}s wall={time.time() - t_wall:.0f}s score {score['A']}-{score['B']} "
+                      f"A={brains['A'].state} B={brains['B'].state} ball={np.round(live.xpos[ball_b][:2], 2)} falls={falls}", flush=True)
+    finally:
+        truth.close()
+        res = dict(kind="soccer", label="SIM-ONLY VISION CONCEPT", seed=SEED, tmax=TMAX, setup=dict(ball=BALL0, A=START["A"], B=START["B"], props=SETUP.get("props", {})),
+                   t_end=round(step * dt, 2), stopped=stopped, score={"RED": score["A"], "BLUE": score["B"]}, goals=goals, goals_to_win=GOALS_TO_WIN,
+                   winner=F.TEAM.get(winner) if final else None, final=final,
+                   own_goals=sum(g["own_goal"] for g in goals), falls={"RED": falls["A"], "BLUE": falls["B"]}, drop_balls=drops,
+                   ball_idle_s=round(stuck_s, 1), touches={"RED": touches["A"], "BLUE": touches["B"]},
+                   brain_counts={F.TEAM[k]: dict(b.counts) for k, b in brains.items()}, wall_s=round(time.time() - t_wall, 1))
+        json.dump(res, open(OUTD / "result.json", "w"), indent=1)
+        with open(OUTD / "events.jsonl", "w") as f:
+            for e in events: f.write(json.dumps(e) + "\n")
+        if qbuf: np.savez_compressed(OUTD / "qpos.npz", qpos=np.stack(qbuf), t=np.array(qt), fps=25.0)
+        if SAVEVIS and vis_meta:
+            n = min(len(tofA), len(tofB), len(vis_meta))
+            np.savez_compressed(OUTD / "vision_tof.npz", tofA=np.stack(tofA[:n]), tofB=np.stack(tofB[:n]))
+            json.dump(vis_meta[:n], open(OUTD / "vision_meta.json", "w"))
+        print("[result] " + json.dumps(res), flush=True)
+
+
+play._loop = _loop
+sys.argv[0] = str(REPO / "scripts" / "play.py")
+if __name__ == "__main__":
+    play.main()

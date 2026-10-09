@@ -4,7 +4,9 @@
 layout.json: {"ball": [x, y], "duck": [x, y], "duck2": [x, y]}  (metres; optional "start": [x, y, yaw_deg],
              optional "obstacles": {"planterN": [x, y, yaw_deg], ...}; ids: stairE stairW planterN planterS crateNE crateSE crateSW crateNW)
 With --app apps/flybrain.app the fly-inspired rules drive the crab instead (no task, no score; default --tmax 120;
-toys only if you give --place/--random). SIM-ONLY VISION CONCEPT."""
+toys only if you give --place/--random).
+Crab soccer: ./run.sh --headless --app apps/jumper_soccer_vision.app [--tmax 300] [--seed N] [--obstacles SEED | --setup setup.json]
+             [--move crateNE=1.2,0.8,45] [--goals-to-win 3] [--physics 1000|500|200] [--mp4 OUT.mp4 --size 720]. SIM-ONLY VISION CONCEPT."""
 from __future__ import annotations
 import argparse, json, sys, time
 from pathlib import Path
@@ -29,6 +31,10 @@ def main():
     ap.add_argument("--fixed-obstacles", action="store_true", help="stairs/planters fixed, crates as shipped (the map exactly as in our tests); "
                     "default: pushable obstacles")
     ap.add_argument("--move", action="append", default=[], metavar="ID=x,y[,yaw]", help="move an obstacle before the start, e.g. --move planterN=-1.0,1.6,30")
+    ap.add_argument("--physics", type=int, choices=[1000, 500, 200], help="physics rate in Hz (default 1000; --fast = 200)")
+    ap.add_argument("--setup", help="soccer: JSON file {ball: [x,y], A: [x,y,deg], B: [x,y,deg], props: {id: [x,y,deg]}}")
+    ap.add_argument("--goals-to-win", type=int, default=3, choices=range(1, 11), metavar="1-10", help="soccer: first to this many goals wins (default 3; --tmax is the cap)")
+    ap.add_argument("--obstacles", type=int, metavar="SEED", help="soccer: a random (mirror-symmetric) obstacle layout from this seed")
     ap.add_argument("--render-only", metavar="RUN_DIR", help="skip the sim: just save the MP4 of an earlier run")
     au = ap.add_argument_group("optional audio for the MP4 (video stays 1x and unchanged; AAC 192k)")
     au.add_argument("--audio", help="mp3/wav/m4a/aac/... file"); au.add_argument("--audio-start", type=float, default=0.0, help="skip the first S s of the song")
@@ -47,7 +53,8 @@ def main():
         return render(rd, a, audio)
     info = inspect(a.app)
     if not info.get("ok"): sys.exit(f"{a.app}: {info.get('error')}")
-    if info["kind"] not in ("hide_seek", "flybrain"): sys.exit("--headless is for hide & seek and flybrain apps; use ./run.sh for the others")
+    if info["kind"] == "soccer": return soccer(a, info, audio)
+    if info["kind"] not in ("hide_seek", "flybrain"): sys.exit("--headless is for hide & seek, flybrain and soccer apps; use ./run.sh for the others")
     FLY = info["kind"] == "flybrain"
     if a.tmax is None: a.tmax = 120.0 if FLY else 600.0
     start = [0.0, 0.0, 0.0]
@@ -113,6 +120,42 @@ def main():
     if pm: print("obstacles moved by the crab (m, SIM TRUTH): " + ", ".join(f"{k} {v:.2f}" for k, v in pm.items()))
     if a.mp4 or a.mp4_folder:
         render(rd, a, audio)
+
+
+def soccer(a, info, audio):
+    """crab soccer 1v1 without a window (SIM-ONLY VISION CONCEPT)."""
+    from jhs.soccer import field as SF
+    setup = json.loads(Path(a.setup).expanduser().read_text()) if a.setup else {}
+    props = dict(setup.get("props") or {})
+    if a.obstacles is not None: props = SF.random_layout(a.obstacles)
+    for mv in a.move:
+        k, v = mv.split("=", 1); props[k.strip()] = [float(x) for x in v.split(",")]
+    setup["props"] = props
+    for l, m in SF.validate(setup): print(f"  {l}: {m}")
+    if any(l == "error" for l, _ in SF.validate(setup)): sys.exit("invalid setup")
+    tmax = a.tmax or 300.0; seed = a.seed if a.seed is not None else (a.random if a.random is not None else 1)
+    proc, rd = runner.start_soccer(info["path"], setup=setup, seed=seed, tmax=tmax, speed=0.0 if a.uncapped else 1.0, live=not a.no_live,
+                                   physics_hz=a.physics or (200 if a.fast else None), pushable=not a.fixed_obstacles,
+                                   goals_to_win=a.goals_to_win)
+    print(f"obstacles: {props or 'none'} ({'fixed' if a.fixed_obstacles else 'pushable'})\nrun folder: {rd}\n(SIM-ONLY VISION CONCEPT) crab soccer, "
+          f"{tmax:.0f} sim-seconds; Ctrl-C stops early and keeps the recording.", flush=True)
+    last = 0
+    try:
+        while proc.poll() is None:
+            time.sleep(2); st = runner.run_state(rd)
+            if time.time() - last > 15 and st.get("t") is not None:
+                last = time.time(); print(f"  sim t={float(st['t']):6.1f}s  rate={st.get('rate', 0) or 0:.2f}x  {st.get('state', '')}  {st.get('ref', '')}", flush=True)
+    except KeyboardInterrupt:
+        print("stopping (saving the recording)...", flush=True); (rd / "STOP").write_text("stop")
+        try: proc.wait(120)
+        except KeyboardInterrupt: proc.kill()
+    rp = rd / "result.json"
+    if not rp.exists(): print(runner.run_state(rd).get("log_tail", "")); sys.exit(f"the match ended without a result; see {rd/'log.txt'}")
+    r = json.loads(rp.read_text())
+    print(f"soccer result (referee, SIM TRUTH): {r.get('final') or 'stopped'} -- RED {r['score']['RED']} - {r['score']['BLUE']} BLUE at {r['t_end']} s; goals "
+          + (", ".join(f"{g['team']}{' (own goal)' if g['own_goal'] else ''} {g['t']}s" for g in r["goals"]) or "none")
+          + f"; falls {r['falls']}; referee drop-balls {r['drop_balls']}; ball idle {r['ball_idle_s']} s")
+    if a.mp4 or a.mp4_folder: render(rd, a, audio)
 
 
 def render(rd, a, audio):

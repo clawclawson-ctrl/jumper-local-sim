@@ -6,7 +6,8 @@ from . import ROOT, TOOLKIT, PKG
 from .apps import inspect, extract_vision
 
 RUNS = Path(os.environ.get("JHS_RUNS", str(ROOT / "runs")))
-MAPS = {"hide_seek": ROOT / "maps" / "jumper-hide-seek-v7.map", "tidy_vision": ROOT / "maps" / "jumper-tidy-room.map"}
+MAPS = {"hide_seek": ROOT / "maps" / "jumper-hide-seek-v7.map", "tidy_vision": ROOT / "maps" / "jumper-tidy-room.map",
+        "soccer": ROOT / "maps" / "jumper-soccer-field.map"}
 DEFAULT_MOVIES = Path.home() / "Movies" / "Jumper Hide & Seek"
 
 
@@ -107,6 +108,40 @@ def start_flybrain(app, toys=None, start=None, seed=1, tmax=120.0, speed=1.0, li
     return proc, rd
 
 
+def start_soccer(app, setup=None, seed=1, tmax=300.0, speed=1.0, live=True, live_size=(1280, 720), physics_hz=None, pushable=True, goals_to_win=3):
+    """1v1 crab soccer (jhs/soccer/run.py) on the soccer field. setup = {ball: [x, y], A: [x, y, deg], B: [x, y, deg],
+    props: {obstacle id: [x, y, deg]}} (validated by jhs.soccer.field.validate); obstacles not listed stay parked outside."""
+    from .soccer import field as SF
+    info = inspect(app)
+    if not info.get("ok"): raise ValueError(info.get("error"))
+    if info["kind"] != "soccer": raise ValueError("not a soccer app")
+    setup = dict(setup or {}); setup.setdefault("ball", [0.0, 0.0]); setup.setdefault("A", list(SF.KICKOFF["A"])); setup.setdefault("B", list(SF.KICKOFF["B"]))
+    setup["props"] = {k: v for k, v in (setup.get("props") or {}).items() if k in SF.PROPS}
+    errs = [m for l, m in SF.validate(setup) if l == "error"]
+    if errs: raise ValueError("invalid setup: " + "; ".join(errs))
+    rd = new_run_dir("soccer")
+    (rd / "setup.json").write_text(json.dumps(setup, indent=1))
+    env = base_env()
+    env.update(VS_SEED=str(int(seed)), VS_OUT=str(rd), VS_TMAX=str(float(tmax)), VS_SAVEVIS="1", JHS_SPEED=str(float(speed)), SC_LIVE="1",
+               JHS_LIVE="1" if live else "0", JHS_LIVE_DIR=str(rd / "live"), JHS_STOP=str(rd / "STOP"), SC_SETUP=str(rd / "setup.json"), SC_GOALS=str(max(1, min(10, int(goals_to_win)))),
+               JHS_LIVE_W=str(live_size[0]), JHS_LIVE_H=str(live_size[1]))
+    from .pushable import variant
+    scene = variant(MAPS["soccer"], rd / "scene.map", pushable=bool(pushable), moves=setup["props"] or None)
+    app_for_play = Path(info["path"])
+    if os.environ.get("JHS_FORCE_LOCAL_CONTROLLER") == "1":
+        app_for_play = strip_controller(app_for_play, rd / "app_local_controller.app")
+    (rd / "local_run.json").write_text(json.dumps(dict(app=str(app_for_play), app_original=info["path"], scene=str(scene), kind="soccer",
+                                                       pushable=bool(pushable), setup=setup, seed=seed, tmax=tmax, goals_to_win=int(goals_to_win), physics_hz=physics_hz or 1000,
+                                                       speed=speed, started=time.strftime("%Y-%m-%d %H:%M:%S"), info=info), indent=1))
+    cmd = [sys.executable, str(PKG / "soccer" / "run.py"), "--app", str(app_for_play), "--scene", str(scene),
+           "--backend", "native", "--device", "cpu", "--headless", "--steps", "999999999"]
+    if physics_hz: cmd += ["--physics-hz", str(int(physics_hz))]
+    log = open(rd / "log.txt", "w")
+    proc = subprocess.Popen(cmd, cwd=str(rd), env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    (rd / "pid").write_text(str(proc.pid))
+    return proc, rd
+
+
 def start_tidy(app, seed=1, tmax=420.0):
     """EXPERIMENTAL: a tidy-up vision app (vision/tidy_vision.py) on the shipped tidy-up room, its own toy layout.
     No hand placement, no live picture, no MP4 (its recordings use a different format); the log shows progress."""
@@ -169,7 +204,10 @@ def save_mp4(run_dir, out=None, size="1080", folder=None, audio=None):
         r = {}
         if (rd / "result.json").exists(): r = json.loads((rd / "result.json").read_text())
         tag = f"{r.get('n_gathered', '?')}of{r.get('n_toys', '?')}"
-        out = folder / (f"jumper-flybrain-{rd.name}-1x-{size}p.mp4" if r.get("kind") == "flybrain" else f"jumper-hide-seek-{rd.name}-{tag}-1x-{size}p.mp4")
+        if r.get("kind") == "soccer":
+            sc = r.get("score") or {}; out = folder / f"jumper-soccer-{rd.name}-RED{sc.get('RED', 0)}-BLUE{sc.get('BLUE', 0)}-1x-{size}p.mp4"
+        else:
+            out = folder / (f"jumper-flybrain-{rd.name}-1x-{size}p.mp4" if r.get("kind") == "flybrain" else f"jumper-hide-seek-{rd.name}-{tag}-1x-{size}p.mp4")
     out = Path(out).expanduser()
     log = open(rd / f"render_{out.stem}.log", "w")
     cmd = [sys.executable, "-m", "jhs.render_run", str(rd), str(out), "--size", str(size)]
@@ -192,7 +230,8 @@ def run_state(rd: Path) -> dict:
     if (rd / "result.json").exists():
         r = json.loads((rd / "result.json").read_text())
         st.update(finished=True, result={k: r.get(k) for k in ("n_found", "n_gathered", "n_toys", "t_all_gathered", "t_end", "falls", "coverage", "placed", "hidden_behind", "n_correct", "props_moved_m",
-                                                "kind", "counts", "path_m", "time_s", "stopped", "toys_moved_m")})
+                                                "kind", "counts", "path_m", "time_s", "stopped", "toys_moved_m",
+                                                "score", "goals", "own_goals", "drop_balls", "ball_idle_s", "final", "winner")})
     log = rd / "log.txt"
     if log.exists():
         txt = log.read_text(errors="replace")
@@ -204,6 +243,6 @@ def run_state(rd: Path) -> dict:
     try: kind = json.loads((rd / "local_run.json").read_text()).get("kind")
     except Exception: kind = None
     st["kind"] = kind
-    need = ("qpos.npz", "vision_meta.json", "vision_tof.npz", "result.json") + (() if kind == "flybrain" else ("maps.npz",))
+    need = ("qpos.npz", "vision_meta.json", "vision_tof.npz", "result.json") + (() if kind in ("flybrain", "soccer") else ("maps.npz",))
     st["can_save_mp4"] = all((rd / f).exists() for f in need)
     return st

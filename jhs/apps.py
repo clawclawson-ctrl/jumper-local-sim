@@ -18,11 +18,12 @@ def inspect(path) -> dict:
         title = next((n.split(":", 1)[1].strip() for n in notes if n.startswith("title:")), None)
         exts = sorted(((b.get("runtimes") or {}).get("mjlab") or {}).get("extensions") or {})
         brain = next((n for n in ("vision/hide_seek.py", "vision/tidy_vision.py") if n in names), None)
+        soccer = "vision/soccer.json" in names
         src = z.read(brain).decode("utf-8", "replace") if brain else ""
     here = sysconfig.get_platform()
     own = here in exts or (here.startswith("macosx-") and "macosx-universal2" in exts)
     modes = sorted((b.get("modes") or {}).keys())
-    kind = "hide_seek" if brain == "vision/hide_seek.py" else "tidy_vision" if brain else "flybrain" if "flybrain" in modes else "official"
+    kind = "soccer" if soccer else "hide_seek" if brain == "vision/hide_seek.py" else "tidy_vision" if brain else "flybrain" if "flybrain" in modes else "official"
     info.update(ok=True, kind=kind, title=title or b.get("name") or p.stem, brain=brain, modes=sorted((b.get("modes") or {}).keys()),
                 controller_platforms=exts, this_platform=here,
                 controller=("the app's own" if own else "built on this computer (mjrl_fsm)"),
@@ -36,6 +37,10 @@ def inspect(path) -> dict:
         info["sim_only"] = True
         info["warning"] = ("flybrain: the official walking policy steered by hand-written fly-INSPIRED rules from the sim camera + dToF "
                            "(SIM-ONLY VISION CONCEPT, not a connectome). Not yet tested in full sim trials.")
+    if kind == "soccer":
+        info["brain"] = "local sim: jhs/soccer/brain.py (one per crab)"; info["sim_only"] = True; info["local_hooks"] = True
+        info["warning"] = ("crab soccer 1v1: two crabs, each steered by its own soccer brain from its own sim camera + dToF + pose "
+                           "(SIM-ONLY VISION CONCEPT). Experimental: only a few test matches so far.")
     if kind == "tidy_vision":
         info["warning"] = "a tidy-up vision app: runs on the shipped tidy-up room with its own toy layout (no hand placement)"
     return info

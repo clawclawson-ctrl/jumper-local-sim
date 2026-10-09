@@ -56,6 +56,15 @@ def flybrain():
     with contextlib.redirect_stdout(buf): FB.unit()          # FB_UNIT: synthetic images, one behaviour each
     return f"{a.name}: {i['kind']}, controller {i['controller']}; rules unit test: {buf.getvalue().strip().replace('[unit] ', '')}"
 item("flybrain app + fly rules (SIM-ONLY)", flybrain)
+def soccer():
+    a = ROOT / "apps" / "jumper_soccer_vision.app"
+    if not a.exists(): return "apps/jumper_soccer_vision.app not present (skipped)"
+    from jhs.apps import inspect as _insp
+    i = _insp(a); assert i["ok"] and i["kind"] == "soccer", i
+    m = ROOT / "maps" / "jumper-soccer-field.map"; assert m.exists(), "maps/jumper-soccer-field.map missing"
+    from jhs.soccer import brain as SB
+    return f"{a.name}: soccer, controller {i['controller']}; field map {m.stat().st_size} B; brain unit test: " + "; ".join(SB.unit())
+item("crab soccer app + field + brains (SIM-ONLY)", soccer)
 item("room v7 map", lambda: (ROOT / "maps" / "jumper-hide-seek-v7.map").stat().st_size)
 if "--full" in sys.argv:
     def world():

@@ -28,6 +28,10 @@ W, H = {"1080": (1920, 1080), "720": (1280, 720), "480": (848, 480)}[A.size]
 PROG = Path(str(OUT) + ".progress.json")
 def progress(**k): PROG.write_text(json.dumps(k))
 
+if INFO.get("kind") == "soccer":     # two-crab world: its own replay (jhs/soccer/render.py)
+    from jhs.soccer.render import main as _soccer_render
+    _soccer_render(A, RUN, INFO, OUT, W, H, progress); sys.exit(0)
+
 REPO = Path(os.environ.get("JUMPER_REPO", str(TOOLKIT)))
 sys.path.insert(0, str(REPO / "scripts"))
 spec = importlib.util.spec_from_file_location("play", REPO / "scripts" / "play.py")

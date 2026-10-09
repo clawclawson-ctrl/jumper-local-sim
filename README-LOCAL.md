@@ -334,6 +334,78 @@ escape. **Still there (not tuned, yours to judge):** a little dithering while fi
 direction flipped. The worst case was a 1.4 s wobble of ±0.15 rad. That happened when the salient-blob picker jumped
 between a weak bar on one side and a strong blob at the image edge, plus some overshoot on small corrections.
 
+## 7c. Crab soccer 1v1 (`jumper_soccer_vision.app`) — SIM-ONLY VISION CONCEPT, experimental
+
+Two crabs play 1v1 soccer on a walled **4.8 x 3.2 m field** with a goal at each end (mouth 0.8 m). **RED** defends the red goal
+(left, -x) and attacks the blue one; **BLUE** the other way. Both crabs run the official walking app (the same controller and
+policies as the hide & seek app). Each one is steered by its own soccer brain (`jhs/soccer/brain.py`) through a virtual gamepad,
+and uses **only its own** simulated camera, dToF and pose. Neither brain is ever given the ball's or the other crab's position from
+the simulator. The **referee** is the only code that uses sim truth. It detects goals (ball fully over the line), keeps the score,
+alternates kickoffs, and drops the ball back into play if nobody has touched it for 20 s. It also counts falls.
+
+**Setup (page):** choose `jumper_soccer_vision.app`, and the field appears from above.
+- Drag the ball, the RED and BLUE crabs (and set the selected crab's heading with the slider).
+- **Add obstacle** puts one of the official props on the field (2 planters, 2 stair steps, 4 crates). You can drag it, turn it
+  45° or remove it.
+- **Random obstacle layout** makes a mirror-symmetric layout from the seed, so neither team is favoured.
+- The page keeps the goal mouths, the centre spot and both kickoff spots clear. Red = not allowed (Start stays off). Yellow = a
+  warning (e.g. a crate close to a wall can trap the ball).
+- **Pushable obstacles** works as in the room. Match length is 5 min by default (3, 2 and 10 are also offered). Live picture,
+  Stop, and **Save run as MP4** (1x, full overlay, optional audio) work as for hide & seek.
+
+**The overlay:**
+- the scoreboard `RED 0 - 0 BLUE` with the match clock;
+- both crabs' camera pictures with what their vision found (ball / opponent / goal boxes);
+- small dToF pictures and each crab's state;
+- a top view where rings and squares are **each crab's own belief** about the ball and the other crab, and the white dot is the
+  real ball (sim truth, display only);
+- the referee line marked **SIM TRUTH**, the sim clock `(1x speed)` and the SIM-ONLY VISION CONCEPT banner.
+
+After a goal the referee **teleports** the crabs to their kickoff spots and puts the ball on the centre spot. This is shown as
+*"referee reset"*, because a real referee would put things back by hand.
+
+**How a crab plays:**
+- **Search:** turn on the spot, then walk somewhere else to look.
+- **Stage:** walk round the ball (never through it) to a spot behind it, as seen from the goal it attacks. If the ball is on a
+  wall, the push line is turned off the wall.
+- **Dribble:** push the ball toward the goal while keeping it centred.
+- **Shoot:** a faster burst when it's close and lined up.
+- **Defend:** go between the ball and its own goal when the other crab is clearly closer to the ball and coming at its goal.
+- dToF obstacles, the walls (map knowledge) and the other crab are avoided. A crab that is stuck backs off.
+
+How the vision tells things apart: the football is found with the hide & seek vision. The other crab is found by its team colour
+and low height, and a goal by its colour and height (30 cm). A ball candidate next to a detected crab is dropped, so the other
+crab's parts are not taken for the ball. Both crabs' light-grey parts are drawn dark so nothing on a crab looks like the white
+ball.
+
+**Goals, celebrations, winning:** when the ball fully crosses a goal line (referee, SIM TRUTH) the scoring crab celebrates with the
+official app's own moves (a crab dance, ~3 s, pressed through its controller like the hide & seek finish); the other crab stands still.
+Then the referee resets the ball to the centre and both crabs to their kickoff spots (teleport, labelled "referee reset"); the team
+that conceded kicks off. **Goals to win** (setup page, default 3, 1-10; headless `--goals-to-win N`): the first crab to reach it wins,
+does a longer celebration (bow + crab dance) and the overlay shows e.g. "RED WINS 3-1". The match length is a cap: when time runs out
+the higher score wins ("... (time)") or it is a draw. The match clock keeps running during celebrations.
+
+**Field:** built from the official room v7 package (`jhs/soccer/field.py` writes `maps/jumper-soccer-field.map`). It uses the same
+floor (tinted turf green), wall material, football, planters, stairs and crates. The goals are simple coloured walls, and the
+lines are non-colliding floor decals. The football's rolling friction is raised to 0.0025 so it slows down like a ball on turf
+instead of rolling forever. The four corners are **rounded**: each is a quarter circle (radius 0.45 m) made of 8 short wall segments, so the ball and the crabs glide round them instead of getting stuck. The brains' wall model, the setup checks and both top views use the same rounded outline. The boundary walls and corners (not the goal nets) are
+slightly **bouncy** (contact solref `-4000 -25`: light damping, wall contact parameters take priority; wall friction 0.3), and a
+12 cm wide, 1.2 cm high **kick strip** (6° ramp) runs along the foot of every wall and corner. Bench check (MuJoCo only): a ball rolling
+into a wall/corner at 0.8 m/s rebounds 0.45-0.54 m (was 0.07 m), hop < 7 mm; a ball left resting against a wall or in a corner rolls
+back ~0.35 m into play. Override for experiments: `SC_WALL_SOLREF`, `SC_KICK_DEG` (0 = no strip), then `python -m jhs.soccer.field`.
+
+**From Terminal:**
+```bash
+./run.sh --headless --app apps/jumper_soccer_vision.app --tmax 180 --seed 11                 # 3-minute match, prints the score
+./run.sh --headless --app apps/jumper_soccer_vision.app --obstacles 2 --mp4 ~/Movies/soccer.mp4 --size 720
+```
+
+**Speed:** two crabs are heavy. On our Linux box a match runs at about 0.12x real time at 1000 Hz physics (0.10x with the live
+picture), so a 3-minute match takes about 25 minutes. The Mac mini should be faster. 500 Hz physics is offered as a faster
+option, but it was not tested.
+
+SOCCER_RESULTS
+
 ## 8. Plain official apps and the tidy-up app
 
 - **Plain apps** (any app without a vision brain): choose it, pick a room, and press **Start**. MuJoCo's 3D window
@@ -386,11 +458,12 @@ Logs: `install.log` (installer), `runs/<run>/log.txt` (each run).
 
 ```
 install.sh, run.sh          installer and launcher
-apps/                       jumper_hide_seek_vision.app, flybrain.app, jumper_tidy_vision.app (+ any you load)
-maps/                       hide & seek room v7, tidy-up room, room outline for the setup page
+apps/                       jumper_hide_seek_vision.app, flybrain.app, jumper_soccer_vision.app, jumper_tidy_vision.app (+ any you load)
+maps/                       hide & seek room v7, soccer field, tidy-up room, room outline for the setup page
 jhs/                        the local sim: setup/live page (server.py, web/), runner, live overlay, MP4 renderer + audio,
                             pushable obstacles (pushable.py), push test, checks,
                             brains/ = flybrain runner + the fly-inspired rules (SIM-ONLY), fly_overlay.py
+                            soccer/ = crab soccer 1v1 (field, two brains, referee, overlay, MP4)
 PUSH_TESTS.md, tests/push/  the push-test results from our Linux box
 toolkit/                    the official Jumper toolkit (KingKongRobotics/jumper, commit 7d3cc4b), only the parts needed
 prebuilt/                   fallback controller for macOS (universal2), built from toolkit/deploy/fsm

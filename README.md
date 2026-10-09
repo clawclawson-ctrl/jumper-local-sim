@@ -1,4 +1,4 @@
-# Jumper Local Sim — hide & seek, flybrain and more, on your Mac
+# Jumper Local Sim — hide & seek, crab soccer, flybrain and more, on your Mac
 
 > **SIM-ONLY VISION CONCEPT.** The crab's camera picture and dToF range readings come from the simulator, and the
 > vision brains here are concepts. This is a simulation demo, not something a real Jumper can do today.
@@ -17,6 +17,7 @@ Included apps (in `apps/`):
 | app | what it does |
 |---|---|
 | `jumper_hide_seek_vision.app` | Hide & seek. The crab searches the room with its (simulated) camera and pushes every toy it finds onto the rug. |
+| `jumper_soccer_vision.app` | Crab soccer 1v1. Two crabs (RED vs BLUE) each find the ball with their own simulated camera and push it into the other goal. Rounded, bouncy field walls; optional obstacles; the scorer celebrates, then a referee reset; choose *Goals to win* (1-10). |
 | `flybrain.app` | The crab wanders on its own, steered by hand-written fly-inspired rules: looming escape, avoidance, fixate/approach, optomotor turns, exploration saccades. No task and no score. |
 | `jumper_tidy_vision.app` | Experimental tidy-up vision brain in the tidy-up room. |
 | `jumper-tidy-up.app` | The official tidy-up sample (policies byte-identical to the official bundle), with no vision brain. You drive it yourself. |
@@ -44,6 +45,7 @@ Other commands:
 ./run.sh --check                  # quick self-test (~20 s); --check --full adds a short end-to-end run
 ./run.sh --headless --random 31 --tmax 60 --mp4 ~/Movies/test.mp4 --size 720    # no window: run and record
 ./run.sh --headless --app apps/flybrain.app --random 31 --tmax 30 --mp4 ~/Movies/fly.mp4 --size 720
+./run.sh --headless --app apps/jumper_soccer_vision.app --tmax 180 --seed 31 --obstacles 3 --goals-to-win 3
 ./run.sh --add-audio VIDEO.mp4 SONG.mp3 [OUT.mp4] [--start S --delay S --volume V --fade S --loop]
 ```
 
@@ -82,13 +84,21 @@ copy in `prebuilt/` by itself.
   fly-inspired rules, not a connectome"*.
 - Built-in unit tests: `./run.sh --check` runs them.
 
+### Crab soccer notes (SIM-ONLY VISION CONCEPT)
+
+- Each crab runs the official walking policy and its own brain ([`jhs/soccer/`](jhs/soccer/)). It sees only its own simulated camera, dToF and pose, never the ball's or the opponent's true position.
+- The brain finds the ball, gets behind it, dribbles and shoots toward the other goal, and defends when the opponent is closer to the ball.
+- The **referee** uses sim truth: it detects goals, keeps score, and does labelled *referee resets* (ball to the centre, crabs to kickoff) after each goal's celebration. It drops the ball if nobody touches it for 20 s.
+- The setup page lets you place the ball, both crabs and optional obstacles (or pick a random layout), and set *Goals to win* (default 3) and a time cap.
+- Test match: RED WINS 3-2, 5 goals from real pushes, 0 own goals, 0 falls. Only a few matches have been tested, so it is still experimental. The brains are simple, with no passing, and the match clock keeps running during celebrations.
+
 ## Real vs sim-only
 
 | real (from the official toolkit) | sim-only (this repo) |
 |---|---|
 | Jumper robot model, walking/gesture policies, `mjrl_fsm` controller, `.app` bundle format | camera pictures and dToF readings rendered by MuJoCo |
 | MuJoCo physics of the crab | vision brains (hide & seek, tidy vision, flybrain rules) |
-| | the "scorer" line (sim truth; the crab never reads it) |
+| | the "scorer" line and soccer referee (sim truth; the crabs never read it) |
 | | pushable obstacles and room setup UI |
 
 Nothing here has been run on a real Jumper. The apps' `bundle.json` files say *"not ready for the board"* because
@@ -109,10 +119,10 @@ they carry no `.rknn` models.
 
 ```
 install.sh, run.sh     installer and launcher
-apps/                  the four .app bundles above
-maps/                  hide & seek room v7, tidy-up room (MuJoCo scene packages)
+apps/                  the five .app bundles above
+maps/                  hide & seek room v7, tidy-up room, soccer field (MuJoCo scene packages)
 jhs/                   the local sim: setup/live page, runner, overlay, MP4 renderer + audio, pushable obstacles,
-                       checks; brains/ = flybrain runner + fly-inspired rules
+                       checks; brains/ = flybrain runner + fly-inspired rules; soccer/ = crab soccer
 toolkit/               the needed parts of the official Jumper toolkit (KingKongRobotics/jumper @ 7d3cc4b), unchanged
 prebuilt/              fallback macOS (universal2) controller, built from toolkit/deploy/fsm
 tests/, PUSH_TESTS.md  push-test results

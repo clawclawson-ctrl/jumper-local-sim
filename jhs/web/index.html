@@ -48,6 +48,24 @@
  <div class="row"><button id="startbtn" onclick="startRun()">Start</button><span id="startmsg"></span></div>
 </section>
 
+<section id="soccersetup" style="display:none">
+ <h2>2 · Set up the match (crab soccer 1v1)</h2>
+ <div class="muted"><b>SIM-ONLY VISION CONCEPT.</b> Each crab sees only with its own simulated camera + dToF and knows its own pose; the referee (goals, kickoff resets, drop-balls) uses sim truth. RED defends the red goal (left) and attacks right; BLUE the opposite.</div>
+ <canvas id="scanvas" width="640" height="460"></canvas>
+ <div class="row">Drag the ball, the crabs and obstacles. Selected: <b id="ssel">–</b>
+  heading <input type="range" id="syaw" min="-180" max="180" value="0" oninput="sSetYaw(this.value)"> <span id="syawv"></span> <button class="sec" onclick="sRotate()">turn obstacle 45°</button></div>
+ <div class="row">Add obstacle <select id="spal"></select> <button class="sec" onclick="sAdd()">Add</button> <button class="sec" onclick="sRemove()">Remove selected</button>
+  <button class="sec" onclick="sRandom()">Random obstacle layout</button> seed <input id="sseed" type="number" value="1" style="width:60px"> <button class="sec" onclick="sClear()">No obstacles</button> <button class="sec" onclick="sKick()">Kickoff positions</button></div>
+ <div id="scheck" class="muted"></div>
+ <div class="row">Match length <select id="stmax"><option value="300">5 min</option><option value="180">3 min</option><option value="120">2 min</option><option value="600">10 min</option></select>
+  Speed <select id="sspeed"><option value="1">at most 1x real time</option><option value="0">as fast as possible</option></select>
+  <label><input type="checkbox" id="spush" checked> Pushable obstacles</label>
+  Goals to win <input id="sgoals" type="number" value="3" min="1" max="10" style="width:50px"> (the match length is the cap)</div>
+ <div class="row">Physics <select id="sphys"><option value="">1000 Hz</option><option value="500">500 Hz (faster)</option><option value="200">200 Hz (fastest)</option></select>
+  <label><input type="checkbox" id="slive" checked> live picture</label> seed <input id="smseed" type="number" value="1" style="width:60px"></div>
+ <div class="row"><button id="sstart" onclick="sStart()">Start match</button><span id="smsg"></span></div>
+</section>
+
 <section id="other" style="display:none;max-width:640px">
  <h2>2 · Run this app</h2><div id="othertext" class="muted"></div>
  <div class="row" id="mapsel_row">Room <select id="mapsel"><option value="hide_seek">Hide &amp; seek room (v7)</option><option value="tidy">Tidy-up room</option><option value="">The app's own default world</option></select></div>
@@ -92,14 +110,15 @@ async function api(p,b){const r=await fetch(p,b===undefined?{}:{method:'POST',he
 function app(){return APPS.find(a=>a.path===$('appsel').value);}
 async function init(){INFO=await api('/api/info'); ROOM=await api('/api/room'); $('folder').value=INFO.movies; await loadApps(INFO.preselect); draw(); check(); runsList(); if(INFO.running){curRun=INFO.running; showLive();}}
 async function loadApps(sel){APPS=await api('/api/apps'); const s=$('appsel'); s.innerHTML='';
- for(const a of APPS){const o=document.createElement('option'); o.value=a.path; o.textContent=(a.ok?'':'✗ ')+a.name+(a.kind?'  ['+({hide_seek:'hide & seek, vision brain',tidy_vision:'tidy-up, vision brain',flybrain:'flybrain: fly-inspired rules, sim-only',official:'plain app: you drive'}[a.kind])+']':''); s.appendChild(o);}
+ for(const a of APPS){const o=document.createElement('option'); o.value=a.path; o.textContent=(a.ok?'':'✗ ')+a.name+(a.kind?'  ['+({hide_seek:'hide & seek, vision brain',tidy_vision:'tidy-up, vision brain',flybrain:'flybrain: fly-inspired rules, sim-only',official:'plain app: you drive',soccer:'crab soccer 1v1, two vision brains, sim-only'}[a.kind])+']':''); s.appendChild(o);}
  if(!sel){const hs=APPS.find(a=>a.kind==='hide_seek'&&a.local_hooks); if(hs) sel=hs.path;} if(sel) s.value=sel; s.onchange=appChanged; appChanged();}
 function appChanged(){const a=app(); if(!a){$('appinfo').textContent='no apps yet: load one';return;}
  $('appinfo').innerHTML=a.ok?`<b>${a.title}</b> · ${a.modes.length} modes · controller: ${a.controller}`+(a.sim_only?' · <span class="warn">SIM-ONLY VISION CONCEPT</span>':'')+(a.warning?`<br><span class="warn">${a.warning}</span>`:''):`<span class="err">${a.error}</span>`;
  const room=a.ok&&((a.kind==='hide_seek'&&a.local_hooks)||a.kind==='flybrain');
  $('setup').style.display=room?'':'none'; $('flynote').style.display=(a.kind==='flybrain')?'':'none';
  if(a.kind==='flybrain'&&$('tmax').dataset.kind!=='fly'){$('tmax').value='120';} if(a.kind!=='flybrain'&&$('tmax').dataset.kind==='fly'){$('tmax').value='600';} $('tmax').dataset.kind=a.kind==='flybrain'?'fly':'hs';
- const other=a.ok&&!room; $('other').style.display=other?'':'none';
+ const soc=a.ok&&a.kind==='soccer'; $('soccersetup').style.display=soc?'':'none'; if(soc&&!SF) sInit();
+ const other=a.ok&&!room&&!soc; $('other').style.display=other?'':'none';
  $('mapsel_row').style.display=a.kind==='official'?'':'none';
  $('othertext').innerHTML=a.kind==='official'?'A plain app has no vision brain: you drive the crab yourself in MuJoCo\'s 3D window (keyboard: the app\'s own keys, printed in the Terminal; a gamepad works too). Close the window to stop.':
    a.kind==='tidy_vision'?'EXPERIMENTAL: the tidy-up vision brain runs on the shipped tidy-up room with its own toy layout. No hand placement, no live picture and no MP4 for this one; progress shows in the log.':
@@ -149,6 +168,48 @@ async function check(){const a=app(); const r=await api('/api/check',{toys,start
  $('checkmsg').innerHTML=parts.join(' · '); $('startbtn').disabled=!r.ok;}
 async function randomPlace(){const a=app(); const r=await api('/api/random',{app:a&&a.path,seed:+$('seed').value,start:crab,moves});
  if(!r.ok){$('checkmsg').innerHTML='<span class="err">'+r.error+'</span>';return;} toys=r.toys; draw(); check();}
+// ---------- soccer setup ----------
+let SF=null, sb={ball:[0,0],A:null,B:null,props:{}}, ssel=null, sdrag=null, serr=false;
+const SC=()=>$('scanvas'), SPAD=20, TCOL={A:'#eb3c28',B:'#3c6ef0'};
+function ssc(){return (SC().width-2*SPAD)/(2*SF.FX+0.9);}
+function sw2c(x,y){return [SC().width/2+x*ssc(), SC().height/2-y*ssc()];} function sc2w(px,py){return [(px-SC().width/2)/ssc(), (SC().height/2-py)/ssc()];}
+async function sInit(){SF=await api('/api/soccer_field'); sb.A=[...SF.kickoff.A]; sb.B=[...SF.kickoff.B]; const p=$('spal'); p.innerHTML='';
+ for(const [k,v] of Object.entries(SF.props)){const o=document.createElement('option'); o.value=k; o.textContent=v.label; p.appendChild(o);} sSetup(); sDraw(); sCheck();}
+function sDraw(){if(!SF)return; const g=SC().getContext('2d'), s=ssc(); g.clearRect(0,0,SC().width,SC().height);
+ const [a,b]=sw2c(-SF.FX,SF.FY); g.beginPath(); g.roundRect(a,b,2*SF.FX*s,2*SF.FY*s,SF.CORNER_R*s); g.fillStyle='#3f7a3d'; g.fill(); g.strokeStyle='#5a6466'; g.lineWidth=5; g.stroke();
+ g.strokeStyle='#efe6b8'; g.lineWidth=2; let [c0,c1]=sw2c(0,SF.FY); g.beginPath(); g.moveTo(c0,c1); [c0,c1]=sw2c(0,-SF.FY); g.lineTo(c0,c1); g.stroke();
+ [c0,c1]=sw2c(0,0); g.beginPath(); g.arc(c0,c1,SF.CENTRE_R*s,0,7); g.stroke();
+ for(const [k,sx] of [['A',-1],['B',1]]){const [gx,gy]=sw2c(sx<0?-SF.FX-SF.GD:SF.FX,SF.GW); g.fillStyle=TCOL[k]; g.fillRect(gx,gy,SF.GD*s,2*SF.GW*s);}
+ for(const [k,v] of Object.entries(sb.props)){const P=SF.props[k]; const [cx,cy]=sw2c(v[0],v[1]); g.save(); g.translate(cx,cy); g.rotate(-(v[2]||0)*Math.PI/180);
+  g.fillStyle='#a7aeb6'; g.fillRect(-P.hx*s,-P.hy*s,2*P.hx*s,2*P.hy*s); g.lineWidth=ssel===k?3:1; g.strokeStyle=ssel===k?'#fff':'#333'; g.strokeRect(-P.hx*s,-P.hy*s,2*P.hx*s,2*P.hy*s); g.restore();
+  g.fillStyle='#111'; g.font='10px sans-serif'; const t=P.label; g.fillText(t,cx-g.measureText(t).width/2,cy+3);}
+ for(const k of ['A','B']){const c=sb[k]; const [x,y]=sw2c(c[0],c[1]); const R=0.17*s, yw=c[2]*Math.PI/180; g.beginPath(); g.arc(x,y,R,0,7); g.fillStyle=TCOL[k]; g.fill();
+  g.lineWidth=ssel===k?3:1.5; g.strokeStyle='#fff'; g.stroke(); g.beginPath(); g.moveTo(x,y); g.lineTo(x+Math.cos(yw)*R*1.8,y-Math.sin(yw)*R*1.8); g.lineWidth=3; g.stroke();
+  g.fillStyle='#fff'; g.font='bold 11px sans-serif'; g.fillText(k==='A'?'RED':'BLUE',x-14,y+R+13);}
+ const [bx,by]=sw2c(sb.ball[0],sb.ball[1]); g.beginPath(); g.arc(bx,by,Math.max(6,SF.BALL_R*s),0,7); g.fillStyle='#fff'; g.fill(); g.strokeStyle='#000'; g.lineWidth=1.5; g.stroke();
+ g.fillStyle='#ddd'; g.font='11px sans-serif'; g.fillText('field 4.8 x 3.2 m, rounded corners · red goal left, blue goal right',SPAD,14);}
+function shit(px,py){const s=ssc(); let [x,y]=sw2c(...sb.ball); if(Math.hypot(px-x,py-y)<12) return 'ball';
+ for(const k of ['A','B']){[x,y]=sw2c(sb[k][0],sb[k][1]); if(Math.hypot(px-x,py-y)<0.2*s) return k;}
+ for(const [k,v] of Object.entries(sb.props)){const P=SF.props[k]; [x,y]=sw2c(v[0],v[1]); const a=(v[2]||0)*Math.PI/180, dx=px-x, dy=py-y;
+  if(Math.abs(dx*Math.cos(a)-dy*Math.sin(a))<P.hx*s+5 && Math.abs(dx*Math.sin(a)+dy*Math.cos(a))<P.hy*s+5) return k;} return null;}
+function spos(e){const r=SC().getBoundingClientRect(); return [(e.clientX-r.left)*SC().width/r.width,(e.clientY-r.top)*SC().height/r.height];}
+function sSetup(){const c=SC(); c.onpointerdown=e=>{sdrag=shit(...spos(e)); if(sdrag){ssel=sdrag; $('ssel').textContent=sLabel(ssel); if(sb[ssel]&&sb[ssel].length>2){$('syaw').value=sb[ssel][2]; $('syawv').textContent=sb[ssel][2]+'°';} c.setPointerCapture(e.pointerId); sDraw();}};
+ c.onpointermove=e=>{if(!sdrag)return; let [x,y]=sc2w(...spos(e)); x=+Math.max(-SF.FX,Math.min(SF.FX,x)).toFixed(2); y=+Math.max(-SF.FY,Math.min(SF.FY,y)).toFixed(2);
+  if(sdrag==='ball') sb.ball=[x,y]; else if(sdrag==='A'||sdrag==='B') sb[sdrag]=[x,y,sb[sdrag][2]]; else sb.props[sdrag]=[x,y,sb.props[sdrag][2]||0]; sDraw();};
+ c.onpointerup=e=>{if(sdrag){sdrag=null; sCheck();}};}
+function sLabel(k){return k==='ball'?'ball':k==='A'?'RED crab':k==='B'?'BLUE crab':(SF.props[k]||{}).label||k;}
+function sSetYaw(v){$('syawv').textContent=v+'°'; if(ssel==='A'||ssel==='B'){sb[ssel][2]=+v;} else if(ssel&&sb.props[ssel]){sb.props[ssel][2]=+v;} sDraw(); sCheck();}
+function sRotate(){if(ssel&&sb.props[ssel]){sb.props[ssel][2]=((sb.props[ssel][2]||0)+45)%180; sDraw(); sCheck();}}
+function sAdd(){const k=$('spal').value; if(sb.props[k]){ssel=k; sDraw(); return;} const spots=[[1.4,0.9],[-1.4,-0.9],[1.4,-0.9],[-1.4,0.9],[0.6,1.1],[-0.6,-1.1],[0.6,-1.1],[-0.6,1.1]];
+ for(const p of spots){if(!Object.values(sb.props).some(v=>Math.hypot(v[0]-p[0],v[1]-p[1])<0.5)){sb.props[k]=[p[0],p[1],0]; break;}} ssel=k; $('ssel').textContent=sLabel(k); sDraw(); sCheck();}
+function sRemove(){if(ssel&&sb.props[ssel]){delete sb.props[ssel]; ssel=null; $('ssel').textContent='–'; sDraw(); sCheck();}}
+function sClear(){sb.props={}; sDraw(); sCheck();} function sKick(){sb.ball=[0,0]; sb.A=[...SF.kickoff.A]; sb.B=[...SF.kickoff.B]; sDraw(); sCheck();}
+async function sRandom(){const r=await api('/api/soccer_random',{seed:+$('sseed').value}); sb.props=r.props||{}; sDraw(); sCheck();}
+async function sCheck(){const r=await api('/api/soccer_check',{setup:sb}); const m=(r.messages||[]).map(x=>`<span class="${x.level==='error'?'err':'warn'}">${x.text}</span>`);
+ if(!m.length) m.push('<span class="ok">setup OK</span>'); $('scheck').innerHTML=m.join(' · '); $('sstart').disabled=!r.ok;}
+async function sStart(){const a=app(); $('smsg').textContent='starting… (two crabs: the world takes ~40 s to build)';
+ const r=await api('/api/start',{app:a.path,setup:sb,pushable:$('spush').checked,seed:+$('smseed').value,tmax:+$('stmax').value,speed:+$('sspeed').value,physics_hz:$('sphys').value?+$('sphys').value:null,live:$('slive').checked,goals_to_win:Math.max(1,Math.min(10,+$('sgoals').value||3))});
+ if(!r.ok){$('smsg').innerHTML='<span class="err">'+(r.error||'failed')+'</span>';return;} $('smsg').textContent=''; curRun=r.run; showLive();}
 // ---------- run ----------
 async function startRun(){const a=app(); $('startmsg').textContent='starting…';
  const r=await api('/api/start',{app:a.path,toys,start:crab,moves,pushable:$('pushable').checked,seed:+$('seed').value,tmax:+$('tmax').value,speed:+$('speed').value,physics_hz:$('phys').value?+$('phys').value:null,live:$('livebox').checked});
@@ -159,11 +220,12 @@ function showLive(){$('livesec').style.display=''; $('donebox').style.display='n
 async function tick(){const s=await api('/api/status?run='+encodeURIComponent(curRun)); if(s.error&&!s.run){return;}
  const im=new Image(); im.onload=()=>{$('live').src=im.src;}; im.src='/api/live.jpg?run='+encodeURIComponent(curRun)+'&t='+Date.now();
  let t=`sim t = ${s.t!=null?(+s.t).toFixed(1):'…'} s`; if(s.rate) t+=` · ${(+s.rate).toFixed(2)}x real time`; if(s.state) t+=` · ${s.state}`;
+ if(s.kind==='soccer'&&s.ref) t+=` · referee (SIM TRUTH): ${s.ref}`;
  if(s.kind==='fly'||s.kind==='flybrain'){if(s.sub) t+=` (${s.sub})`; if(s.counts) t+=' · '+Object.entries(s.counts).filter(([k,v])=>v).map(([k,v])=>k+' '+v).join(', ');}
  if(s.ntoys) t+=` · crab's own count ${s.gathered}/${s.ntoys} · scorer (SIM TRUTH, not used by the crab) ${s.n_truth}/${s.ntoys}`;
  $('stat').textContent=t; $('log').textContent=s.log_tail||'';
  if(!s.running){clearInterval(poll); $('stopbtn').disabled=true;
-  const R=s.result; let msg=(R&&R.kind==='flybrain')?`finished: ${R.t_end} s sim, falls ${R.falls}, walked ${R.path_m} m · behaviours: `+Object.entries(R.counts||{}).map(([k,v])=>k+' '+v).join(', ')+(R.props_moved_m?' · props moved: '+(Object.entries(R.props_moved_m).filter(([k,v])=>v>=0.01).map(([k,v])=>k+' '+v.toFixed(2)+' m').join(', ')||'none'):'')+' <span class="warn">(SIM-ONLY, fly-inspired rules)</span>':(s.result&&s.result.n_correct!=null)?`finished: sorted into the right bin ${s.result.n_correct}/${s.result.n_toys} (SIM TRUTH), falls ${s.result.falls}`:s.result?`finished: found ${s.result.n_found}/${s.result.n_toys}, on the rug ${s.result.n_gathered}/${s.result.n_toys} (SIM TRUTH)`+(s.result.t_all_gathered!=null?`, all on the rug at ${s.result.t_all_gathered} s`:'')+`, falls ${s.result.falls}`+(s.result.props_moved_m?' · props moved by the crab: '+Object.entries(s.result.props_moved_m).filter(([k,v])=>v>=0.01).map(([k,v])=>k+' '+v.toFixed(2)+' m').join(', '):''):(s.exit_code? 'stopped with an error — see the log':'stopped');
+  const R=s.result; let msg=(R&&R.kind==='soccer')?`${R.final||('RED '+R.score.RED+' - '+R.score.BLUE+' BLUE')} (referee, SIM TRUTH) · goals: `+((R.goals||[]).map(g=>g.team+(g.own_goal?' (own goal)':'')+' '+g.t+'s').join(', ')||'none')+` · falls RED ${(R.falls||{}).RED} BLUE ${(R.falls||{}).BLUE} · referee drop-balls ${R.drop_balls} <span class="warn">(SIM-ONLY VISION CONCEPT)</span>`:(R&&R.kind==='flybrain')?`finished: ${R.t_end} s sim, falls ${R.falls}, walked ${R.path_m} m · behaviours: `+Object.entries(R.counts||{}).map(([k,v])=>k+' '+v).join(', ')+(R.props_moved_m?' · props moved: '+(Object.entries(R.props_moved_m).filter(([k,v])=>v>=0.01).map(([k,v])=>k+' '+v.toFixed(2)+' m').join(', ')||'none'):'')+' <span class="warn">(SIM-ONLY, fly-inspired rules)</span>':(s.result&&s.result.n_correct!=null)?`finished: sorted into the right bin ${s.result.n_correct}/${s.result.n_toys} (SIM TRUTH), falls ${s.result.falls}`:s.result?`finished: found ${s.result.n_found}/${s.result.n_toys}, on the rug ${s.result.n_gathered}/${s.result.n_toys} (SIM TRUTH)`+(s.result.t_all_gathered!=null?`, all on the rug at ${s.result.t_all_gathered} s`:'')+`, falls ${s.result.falls}`+(s.result.props_moved_m?' · props moved by the crab: '+Object.entries(s.result.props_moved_m).filter(([k,v])=>v>=0.01).map(([k,v])=>k+' '+v.toFixed(2)+' m').join(', '):''):(s.exit_code? 'stopped with an error — see the log':'stopped');
   $('stat').innerHTML=msg; if(s.can_save_mp4) $('donebox').style.display=''; runsList();}}
 async function stopRun(){await api('/api/stop',{run:curRun}); $('stat').textContent='stopping (it saves the recording first)…';}
 async function uploadAudio(f){if(!f)return; $('amsg').textContent='copying '+f.name+' …'; const r=await fetch('/api/upload_audio',{method:'POST',headers:{'X-Filename':f.name},body:f}); const i=await r.json();
@@ -178,7 +240,7 @@ async function rtick(){const p=await api('/api/render_status?out='+encodeURIComp
  if(p.finished){clearInterval(rpoll); $('reveal').style.display='';} else if(p.exit_code){clearInterval(rpoll); $('rmsg').innerHTML='<span class="err">rendering failed — see render_*.log in the run folder</span>';}}
 function reveal(){api('/api/reveal',{path:lastOut});}
 async function runsList(){const rs=await api('/api/runs'); if(!rs.length){$('runs').textContent='none yet';return;}
- let h='<table><tr><th>run</th><th>result (SIM TRUTH)</th><th></th></tr>'; for(const r of rs){const res=(r.result&&r.result.kind==='flybrain')?`flybrain: ${r.result.t_end} s, falls ${r.result.falls}, path ${r.result.path_m} m`:(r.result&&r.result.n_correct!=null)?`tidy: sorted ${r.result.n_correct}/${r.result.n_toys}, ${r.result.t_end} s`:r.result?`found ${r.result.n_found}/${r.result.n_toys}, on rug ${r.result.n_gathered}/${r.result.n_toys}, ${r.result.t_end} s`:(r.running?'running':'');
+ let h='<table><tr><th>run</th><th>result (SIM TRUTH)</th><th></th></tr>'; for(const r of rs){const res=(r.result&&r.result.kind==='soccer')?`soccer: RED ${r.result.score.RED} - ${r.result.score.BLUE} BLUE, ${r.result.t_end} s`:(r.result&&r.result.kind==='flybrain')?`flybrain: ${r.result.t_end} s, falls ${r.result.falls}, path ${r.result.path_m} m`:(r.result&&r.result.n_correct!=null)?`tidy: sorted ${r.result.n_correct}/${r.result.n_toys}, ${r.result.t_end} s`:r.result?`found ${r.result.n_found}/${r.result.n_toys}, on rug ${r.result.n_gathered}/${r.result.n_toys}, ${r.result.t_end} s`:(r.running?'running':'');
   h+=`<tr><td>${r.run}</td><td>${res}</td><td>${r.can_save_mp4?`<button class="sec" onclick="curRun='${r.run}';saveMp4('${r.run}')">Save as MP4</button>`:''}</td></tr>`;} $('runs').innerHTML=h+'</table>';}
 setup(); init().then(()=>{ if(location.search.includes('selftest=1')) selftest(); });
 // ?selftest=1 : drags a toy, the crab and a prop with synthetic pointer events and reports what the page decided (used by the Linux tests)

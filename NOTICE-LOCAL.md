@@ -24,3 +24,5 @@ SIM-ONLY VISION CONCEPT.
 - `jhs/fonts/DejaVuSans*.ttf`: DejaVu fonts. See `jhs/fonts/LICENSE-DejaVu.txt`.
 - Python packages (MuJoCo, PyTorch, ONNX Runtime, NumPy, Pillow, imageio, ...) are downloaded by `install.sh` under their
   own licences. They are not shipped in this folder.
+
+- `maps/jumper-soccer-field.map` (crab soccer field, added in v1.1.0): the same note as the other maps applies to any KingKong jumper-design pieces it uses. Our Apache-2.0 licence gives no rights to those assets.
