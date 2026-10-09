@@ -221,6 +221,8 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                     cpos = live.cam_xpos[c_id].copy(); cR = live.cam_xmat[c_id].reshape(3, 3).copy()
                     tpos = live.cam_xpos[t_id].copy(); tR = live.cam_xmat[t_id].reshape(3, 3).copy()
                     p = SB.perceive(k, img, selfm, cpos, cR, cam, rngs, tpos, tR, tcam)
+                    if t < 2.0 and step % (vis_every * 5) == 0:    # kickoff check in the log: does each crab see the ball / the other crab?
+                        print(f"[kickoff-vision] t={t:.1f} {F.TEAM[k]} ball={[tuple(np.round(d['xy'], 2)) for d in p['ball']]} opp={len(p['opp'])}", flush=True)
                     q = live.xquat[base[k]]; pose = (float(live.xpos[base[k]][0]), float(live.xpos[base[k]][1]), yaw_of(q))   # own pose
                     br = brains[k]; br.observe(t, p, pose)
                     poses[k] = pose

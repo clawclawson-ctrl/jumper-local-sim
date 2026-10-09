@@ -23,7 +23,7 @@ vision.CLASSES["football"] = dict(vision.CLASSES["football"], top=2 * BALL_R)
 
 
 PREDICT = __import__("os").environ.get("SOCCER_PREDICT", "1") == "1"    # ball track prediction + intercept (own sensing only)
-BALL_DECEL, WALL_E, PRED_H, INT_H = 0.25, 0.6, 4.0, 2.0                # m/s^2 rolling decel, wall restitution, horizons (s)
+BALL_DECEL, WALL_E, PRED_H, INT_H = 0.25, 0.6, 2.5, 1.5                # m/s^2 rolling decel, wall restitution, horizons (s)
 
 
 def predict_ball(p, v, dt, step=0.05):
@@ -95,6 +95,13 @@ def colour_blobs(img, cam_pos, cam_R, cam, selfmask, fam):
     return out
 
 
+def ball_not_crab(d, crabs):
+    """False when a white blob overlapping the other crab's image box is at the crab's range (its parts); a ball in front is kept."""
+    bx0, by0, bx1, by1 = d["bbox"]
+    return not any(not (bx1 < c["bbox"][0] - 2 or bx0 > c["bbox"][2] + 2 or by1 < c["bbox"][1] - 2 or by0 > c["bbox"][3] + 2)
+                   and d.get("rng", 0.0) > c["rng"] - 0.30 for c in crabs)
+
+
 def perceive(team, img, selfmask, cam_pos, cam_R, cam, tof, tof_pos, tof_R, tof_cam):
     """-> dict(ball=[dets], opp=[dets], goals=[dets], obst=Nx3). Everything from this crab's own sensors."""
     dets = [d for d in vision.detect(img, cam_pos, cam_R, cam, tof=tof, tof_pos=tof_pos, tof_R=tof_R, tof_cam=tof_cam, selfmask=selfmask)
@@ -109,7 +116,9 @@ def perceive(team, img, selfmask, cam_pos, cam_R, cam, tof, tof_pos, tof_R, tof_
         x, y = d["xy"]
         if any(np.linalg.norm(np.asarray(d["xy"]) - c["xy"]) < 0.22 for c in crabs): continue   # the other crab's parts
         bx0, by0, bx1, by1 = d["bbox"]
-        if any(not (bx1 < c["bbox"][0] - 2 or bx0 > c["bbox"][2] + 2 or by1 < c["bbox"][1] - 2 or by0 > c["bbox"][3] + 2) for c in crabs): continue
+        # (fix4) a white blob overlapping the other crab's image box is only "the crab's parts" when it is at the crab's range;
+        # a ball IN FRONT of the crab (kickoff: ball between us, the other crab right behind it) used to be thrown away here
+        if not ball_not_crab(d, crabs): continue
         if abs(y) > FY + 0.05 or abs(x) > FX + 0.45: continue                                # outside the field
         ball.append(dict(d, xy=np.asarray(d["xy"], float)))
     obst = vision.tof_obstacles(tof, tof_pos, tof_R, tof_cam, rmax=0.7) if tof is not None else np.zeros((0, 3))
@@ -160,7 +169,7 @@ class Brain:
 
     def ball_now(self, extra=0.0):
         """my ball estimate moved forward to now (+extra s) along its track."""
-        if not PREDICT or float(np.linalg.norm(self.bv0)) < 0.08: return self.ball.copy()
+        if not PREDICT or float(np.linalg.norm(self.bv0)) < 0.2: return self.ball.copy()     # (fix4) ignore jitter-level speeds
         return predict_ball(self.ball, self.bv0, min(PRED_H, self.ball_age() + extra))[0]
 
     def intercept(self, me, speed=0.30):
@@ -343,7 +352,7 @@ class Brain:
         x, y, yaw = pose; me = np.array([x, y]); t = self.t
         # ---- search ----
         # lost a MOVING ball: go to where my track says it rolled before scanning (up to PRED_H s, confidence decays)
-        if PREDICT and 0.6 < self.ball_age() <= PRED_H and not self.pred_fail and float(np.linalg.norm(self.bv0)) > 0.1:
+        if PREDICT and 0.6 < self.ball_age() <= PRED_H and not self.pred_fail and float(np.linalg.norm(self.bv0)) > 0.2:
             P = self.ball_now(); conf = max(0.0, 1.0 - self.ball_age() / PRED_H)
             if float(np.linalg.norm(P - me)) < 0.3: self.pred_fail = True          # got there, not reacquired -> search
             else:
@@ -410,7 +419,7 @@ class Brain:
             return p
         # stage: get behind the ball (round it, never through it)
         self.state = "stage"
-        if PREDICT and float(np.linalg.norm(self.bv0)) > 0.1 and self.ball_age() < 1.2:      # intercept a rolling ball
+        if PREDICT and float(np.linalg.norm(self.bv0)) > 0.2 and self.ball_age() < 0.6:      # intercept a rolling ball
             bi = self.intercept(me); u = self.stage_dir(bi); b = bi; perp = np.array([-u[1], u[0]])
             rel = me - b; along = float(rel @ u); side = float(rel @ perp); hu = math.atan2(u[1], u[0]); db = float(np.linalg.norm(b - me))
         S = b - u * (BALL_R + 0.26)
@@ -525,6 +534,10 @@ def unit():
         q, v = predict_ball((FX - 0.3, 0.9), (0.8, 0.0), 1.0); assert v[0] < 0 and q[0] < FX - BALL_R, (q, v)
         bi = bp.intercept(np.array([-1.0, 0.0])); assert bi[0] > P[0] + 0.05, (bi, P)
         out.append(f"predict: lost rolling ball -> go to {np.round(P, 2)} (last seen {np.round(bp.ball, 2)}); wall bounce; intercept leads to {np.round(bi, 2)} ok")
+    crab_ = dict(bbox=(280, 200, 360, 260), rng=1.75)
+    assert ball_not_crab(dict(bbox=(310, 230, 330, 250), rng=0.85), [crab_]), "kickoff: ball in front of the other crab must be kept"
+    assert not ball_not_crab(dict(bbox=(310, 230, 330, 250), rng=1.7), [crab_])
+    out.append("kickoff: ball in front of the other crab kept, white part on the crab rejected ok")
     out.append(f"return to kickoff: A* path {len(pth)} cells round the centre circle, waits on the spot ok")
     return out
 
