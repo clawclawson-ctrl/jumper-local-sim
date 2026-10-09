@@ -54,7 +54,7 @@ class Memory:
 
     def unseen(self): return INSIDE & ((self.t - self.seen) > SEEN_DECAY) & ~WALLBLOCK
 
-    def next_view(self, me, plan_len=None):
+    def next_view(self, me, plan_len=None, sign=1):
         """next-best-view: lattice viewpoints scored by the unseen floor they would show (360 deg scan on arrival, 1.6 m),
         unseen cells next to obstacles count double (hidden corners behind props), minus a travel cost."""
         un = self.unseen()
@@ -67,8 +67,12 @@ class Memory:
         w = un.astype(float) * (1.0 + near_obst)
         ux, uy, uw = CX[un], CY[un], w[un]
         best, bs = None, 0.0
-        for gx in np.arange(-FX + 0.35, FX - 0.3, 0.3):
-            for gy in np.arange(-FY + 0.35, FY - 0.3, 0.3):
+        # a lattice centred on the field (mirror-symmetric), visited in team-relative order (sign = my attack direction) so a
+        # tie between two equally good viewpoints is broken the same way for RED and BLUE
+        kx, ky = int((FX - 0.35) / 0.3), int((FY - 0.35) / 0.3)
+        for ix in range(-kx, kx + 1):
+            for iy in range(-ky, ky + 1):
+                gx, gy = sign * ix * 0.3, sign * iy * 0.3
                 i, j = cell((gx, gy))
                 if WALLBLOCK[i, j] or occ[i, j]: continue
                 m = np.hypot(ux - gx, uy - gy) < 1.6
@@ -79,13 +83,13 @@ class Memory:
                 if sc > bs: best, bs = np.array([gx, gy]), sc
         return best, bs
 
-    def plan(self, start, goal, pushable, blocked_extra=None):
+    def plan(self, start, goal, pushable, blocked_extra=None, sign=1):
         """A* on the 0.1 m grid. Walls/goals (map knowledge) blocked; sensed obstacles blocked, or +PUSH_COST per cell if pushable.
         blocked_extra(x, y) -> bool adds more blocked cells (centre circle, the other crab)."""
         occ = self.occ(); s0, g0 = cell(start), cell(goal)
-        openq = [(0.0, s0)]; came = {s0: None}; cost = {s0: 0.0}; n = 0
+        openq = [(0.0, (0, 0), s0)]; came = {s0: None}; cost = {s0: 0.0}; n = 0
         while openq and n < 8000:
-            _, c = heapq.heappop(openq); n += 1
+            _, _, c = heapq.heappop(openq); n += 1
             if c == g0: break
             for dx in (-1, 0, 1):
                 for dy in (-1, 0, 1):
@@ -100,7 +104,7 @@ class Memory:
                             extra = PUSH_COST
                     nc = cost[c] + math.hypot(dx, dy) + extra
                     if nc < cost.get(nb, 1e9):
-                        cost[nb] = nc; came[nb] = c; heapq.heappush(openq, (nc + math.hypot(nb[0] - g0[0], nb[1] - g0[1]), nb))
+                        cost[nb] = nc; came[nb] = c; heapq.heappush(openq, (nc + math.hypot(nb[0] - g0[0], nb[1] - g0[1]), (sign * nb[0], sign * nb[1]), nb))   # mirrored tie-break
         if g0 not in came: return []
         path = []; c = g0
         while c is not None: path.append(np.array([XS[c[0]], YS[c[1]]])); c = came[c]

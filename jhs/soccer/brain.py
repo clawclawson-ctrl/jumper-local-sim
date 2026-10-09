@@ -193,7 +193,7 @@ class Brain:
         return math.hypot(x - self.ball[0], y - self.ball[1]) < self.RET_CENTRE_R or self._opp_block(x, y)
 
     def plan(self, start, goal):
-        return self.mem.plan(start, goal, self.pushable, self._ret_blocked_xy)
+        return self.mem.plan(start, goal, self.pushable, self._ret_blocked_xy, sign=self.dirx)
 
     def plan_old(self, start, goal):
         """A* on my own occupancy (walls = map knowledge, centre circle, obstacles I have seen with dToF, the other crab as I last saw it)."""
@@ -253,10 +253,10 @@ class Brain:
         if self.exp_goal is None or self.t - self.exp_t > 6.0 or np.linalg.norm(self.exp_goal - me) < 0.25:
             if self.exp_goal is not None and np.linalg.norm(self.exp_goal - me) < 0.25:     # arrived: scan here first
                 self.exp_goal = None; self.scan_acc = 0.0; self.scan_prev = yaw; return {"rx": 0.62}
-            g, _ = self.mem.next_view(me)
-            if g is None: self.mem.seen[:] = -1e9; g, _ = self.mem.next_view(me)       # everything searched: start over
+            g, _ = self.mem.next_view(me, sign=self.dirx)
+            if g is None: self.mem.seen[:] = -1e9; g, _ = self.mem.next_view(me, sign=self.dirx)       # everything searched: start over
             self.exp_goal = g if g is not None else np.zeros(2); self.exp_t = self.t
-            self.exp_path = self.mem.plan(me, self.exp_goal, self.pushable, self._opp_block) or [self.exp_goal]
+            self.exp_path = self.mem.plan(me, self.exp_goal, self.pushable, self._opp_block, sign=self.dirx) or [self.exp_goal]
             self.counts["explores"] = self.counts.get("explores", 0) + 1
         self.state = "explore"; self.sub = f"EXPLORE: next best view ({self.exp_goal[0]:.1f}, {self.exp_goal[1]:.1f})"
         return self._follow(pose, self.exp_path, self.exp_goal, "exploring")
@@ -422,6 +422,26 @@ def unit():
     m3 = X.Memory(); m3.t = 5.0; m3.add_obstacles(np.array([[0.0, y, 0.1] for y in np.arange(-0.2, 0.21, 0.05)]))  # short prop
     pth3 = m3.plan(np.array([-1.0, 0.0]), np.array([1.0, 0.0]), pushable=True); assert pth3 and not m3.through_obstacle(pth3, k=len(pth3))
     out.append("push-through costing: blocked field -> shove through a pushable prop; short prop -> walk round ok")
+    # mirror test: RED in a situation vs BLUE in the same situation turned 180 deg about the centre spot -> the same stick commands
+    R = lambda p: np.array([-p[0], -p[1]])
+    cases = [((-0.5, 0.1, 0.2), (0.0, 0.05), None), ((0.3, -0.4, 2.5), (0.6, 0.2), None), ((1.0, 0.5, -2.9), (-0.2, 0.3), (-0.4, 0.2)),
+             ((-1.8, -1.2, 0.7), (-2.0, -1.3), None), ((0.2, 0.0, 3.1), (1.6, 0.05), (1.9, 0.3))]
+    for pose, ball, opp in cases:
+        cm = {}
+        for team, P, B, O in (("A", pose, ball, opp), ("B", (-pose[0], -pose[1], wrap(pose[2] + math.pi)), R(ball), None if opp is None else R(opp))):
+            b_ = Brain(team); b_.reset(kickoff=None, t=0.0)
+            for tt in (1.0, 1.1, 1.2):
+                b_.observe(tt, dict(ball=[dict(xy=np.asarray(B, float), rng=1.0, bbox=(0, 0, 1, 1))], opp=[] if O is None else [dict(xy=np.asarray(O, float), rng=1.0)],
+                                    goals=[], obst=np.zeros((0, 3))), P)
+                c_ = b_.decide(P)
+            cm[team] = (b_.state, {k: round(float(v), 3) for k, v in c_.items()})
+        assert cm["A"][0] == cm["B"][0] and all(abs(cm["A"][1].get(k, 0) - cm["B"][1].get(k, 0)) < 0.02 for k in set(cm["A"][1]) | set(cm["B"][1])), (pose, cm)
+    ma, mb = X.Memory(), X.Memory(); ma.t = mb.t = 50.0
+    ga, _ = ma.next_view(np.array([-0.9, 0.2]), sign=1); gb, _ = mb.next_view(np.array([0.9, -0.2]), sign=-1)
+    assert np.allclose(ga, -gb), (ga, gb)
+    pa = ma.plan(np.array([-1.0, 0.3]), np.array([1.0, -0.2]), True, sign=1); pb_ = mb.plan(np.array([1.0, -0.3]), np.array([-1.0, 0.2]), True, sign=-1)
+    assert len(pa) == len(pb_) and all(np.allclose(a_, -b2, atol=0.11) for a_, b2 in zip(pa, pb_)), "A* paths should mirror"
+    out.append(f"mirror: {len(cases)} RED/BLUE situations -> same state + commands; explore view + A* path mirror ok")
     out.append(f"return to kickoff: A* path {len(pth)} cells round the centre circle, waits on the spot ok")
     return out
 
