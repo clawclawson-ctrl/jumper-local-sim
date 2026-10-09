@@ -28,9 +28,10 @@ class Memory:
 
     def occ(self): return (self.t - self.obst) < OBST_FORGET
 
-    def add_obstacles(self, pts, ball=None):
+    def add_obstacles(self, pts, ball=None, opp=None):
         for p in pts[::2]:
             if ball is not None and np.hypot(p[0] - ball[0], p[1] - ball[1]) < 0.16: continue
+            if opp is not None and np.hypot(p[0] - opp[0], p[1] - opp[1]) < 0.35: continue    # the other crab is not a prop
             if wall_clear(p[0], p[1]) < 0.06: continue                  # that is the wall itself (map knowledge)
             i, j = cell(p); self.obst[max(0, i - 1):i + 2, max(0, j - 1):j + 2] = self.t
 
@@ -74,7 +75,7 @@ class Memory:
             for iy in range(-ky, ky + 1):
                 gx, gy = sign * ix * 0.3, sign * iy * 0.3
                 i, j = cell((gx, gy))
-                if WALLBLOCK[i, j] or occ[i, j]: continue
+                if WALLBLOCK[i, j] or occ[i, j] or math.hypot(gx - me[0], gy - me[1]) < 0.5: continue    # a view > 0.5 m away
                 m = np.hypot(ux - gx, uy - gy) < 1.6
                 if not m.any(): continue
                 gain = float((uw[m] * self._los(gx, gy, ux[m], uy[m])).sum())

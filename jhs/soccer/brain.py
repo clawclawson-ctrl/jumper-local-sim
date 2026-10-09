@@ -110,13 +110,14 @@ class Brain:
         self.state = "kickoff"; self.sub = ""; self.t = t; self.hold = None; self.hold_until = 0.0
         self.stuck_ref = None; self.scan_acc = 0.0; self.scan_prev = None; self.search_goal = None
         self.shoot_until = 0.0; self.side = 1.0; self.last_cmd = {}; self.wait_until = t + 0.6; self.obst = np.zeros((0, 3))
-        self.target = None
+        self.target = None; self.searching = False; self.exploring = False; self.scan_t0 = t; self.wd = (t, np.zeros(2))
 
     # ---- beliefs ----------------------------------------------------------------------------------------------------
     def observe(self, t, per, pose):
         self.t = t; self.obst = per["obst"]
         x, y, yaw = pose
-        self.mem.t = t; self.mem.add_obstacles(per["obst"], self.ball if t - self.ball_t < 1.5 else None); self.mem.mark_view(pose)
+        self.mem.t = t; self.mem.add_obstacles(per["obst"], self.ball if t - self.ball_t < 1.5 else None,
+                                                    (per["opp"][0]["xy"] if per["opp"] else self.opp if self.opp is not None and t - self.opp_t < 1.5 else None)); self.mem.mark_view(pose)
         if per["ball"]:
             pred = self.ball + self.bv * min(1.0, t - self.ball_t) if t - self.ball_t < 2.0 else None
             d = min(per["ball"], key=lambda d: np.linalg.norm(d["xy"] - pred) if pred is not None else d["rng"])
@@ -251,10 +252,15 @@ class Brain:
     def _explore(self, pose):
         x, y, yaw = pose; me = np.array([x, y])
         if self.exp_goal is None or self.t - self.exp_t > 6.0 or np.linalg.norm(self.exp_goal - me) < 0.25:
-            if self.exp_goal is not None and np.linalg.norm(self.exp_goal - me) < 0.25:     # arrived: scan here first
-                self.exp_goal = None; self.scan_acc = 0.0; self.scan_prev = yaw; return {"rx": 0.62}
+            if self.exp_goal is not None and np.linalg.norm(self.exp_goal - me) < 0.25:     # arrived: one scan here, then explore on
+                self.exp_goal = None; self.exploring = False; self.scan_acc = 0.0; self.scan_prev = yaw; self.scan_t0 = self.t
+                self.state = "search"; self.sub = "scan: turning to look for the ball"; return {"rx": 0.62}
             g, _ = self.mem.next_view(me, sign=self.dirx)
             if g is None: self.mem.seen[:] = -1e9; g, _ = self.mem.next_view(me, sign=self.dirx)       # everything searched: start over
+            if g is None or np.linalg.norm(g - me) < 0.5:               # no useful view: a random reachable point > 0.5 m away
+                for _ in range(50):
+                    q = np.array([self.rng.uniform(-FX + 0.4, FX - 0.4), self.rng.uniform(-FY + 0.4, FY - 0.4)])
+                    if np.linalg.norm(q - me) > 0.8 and wall_clear(*q) > 0.3: g = q; break
             self.exp_goal = g if g is not None else np.zeros(2); self.exp_t = self.t
             self.exp_path = self.mem.plan(me, self.exp_goal, self.pushable, self._opp_block, sign=self.dirx) or [self.exp_goal]
             self.counts["explores"] = self.counts.get("explores", 0) + 1
@@ -304,13 +310,23 @@ class Brain:
         x, y, yaw = pose; me = np.array([x, y]); t = self.t
         # ---- search ----
         if self.ball_age() > 2.5:
-            if self.state != "search": self.state = "search"; self.scan_acc = 0.0; self.scan_prev = yaw; self.counts["searches"] += 1; self.search_goal = None
-            self.scan_acc += abs(wrap(yaw - self.scan_prev)); self.scan_prev = yaw
-            if self.scan_acc < 2 * math.pi + 0.3 and self.search_goal is None:
-                self.sub = "scan: turning to look for the ball"
-                d = self.ball - me; e = wrap(math.atan2(d[1], d[0]) - yaw) if self.ball_age() < 8 else 1.0
-                return {"rx": (-1 if e > 0 else 1) * 0.62}
+            # (fix3) one search episode = scan 360 deg once, then EXPLORE (next best view, scan there, explore again ...).
+            # Before, _explore set state 'explore' and the next tick saw state != 'search' and restarted the scan: spin forever.
+            if not self.searching:
+                self.searching = True; self.exploring = False; self.state = "search"; self.counts["searches"] += 1
+                self.scan_acc = 0.0; self.scan_prev = yaw; self.scan_t0 = t; self.exp_goal = None; self.wd = (t, me.copy())
+            if np.linalg.norm(me - self.wd[1]) > 0.3: self.wd = (t, me.copy())
+            elif t - self.wd[0] > 8.0:          # watchdog: 8 s of search without moving 0.3 m -> force EXPLORE to a new target
+                self.exploring = True; self.exp_goal = None; self.wd = (t, me.copy()); self.counts["watchdog"] = self.counts.get("watchdog", 0) + 1
+            if not self.exploring:
+                self.scan_acc += abs(wrap(yaw - self.scan_prev)); self.scan_prev = yaw
+                if self.scan_acc < 2 * math.pi and t - self.scan_t0 < 10.0:       # bounded: one full turn (or 10 s)
+                    self.state = "search"; self.sub = "scan: turning to look for the ball"
+                    d = self.ball - me; e = wrap(math.atan2(d[1], d[0]) - yaw) if self.ball_age() < 8 else 1.0
+                    return {"rx": (-1 if e > 0 else 1) * 0.62}
+                self.exploring = True; self.exp_goal = None
             return self._explore(pose)
+        self.searching = False; self.exploring = False
         b = self.ball.copy(); db = float(np.linalg.norm(b - me))
         # ---- defend: the other crab is clearly closer to the ball ----
         opp_ok = self.opp is not None and t - self.opp_t < 2.0
@@ -442,6 +458,19 @@ def unit():
     pa = ma.plan(np.array([-1.0, 0.3]), np.array([1.0, -0.2]), True, sign=1); pb_ = mb.plan(np.array([1.0, -0.3]), np.array([-1.0, 0.2]), True, sign=-1)
     assert len(pa) == len(pb_) and all(np.allclose(a_, -b2, atol=0.11) for a_, b2 in zip(pa, pb_)), "A* paths should mirror"
     out.append(f"mirror: {len(cases)} RED/BLUE situations -> same state + commands; explore view + A* path mirror ok")
+    # fix3: crab in a corner, ball hidden (never seen) -> one bounded scan, then EXPLORE to a target > 0.5 m away, and it walks
+    bz = Brain("A"); bz.reset(kickoff=None, t=0.0); P = [-1.93, -1.08, 0.0]; tt = 0.0; sts = []
+    stairs = np.array([[x_, y_, 0.1] for x_, y_ in zip(np.linspace(-1.5, -0.8, 15), np.linspace(-0.9, -0.2, 15))])
+    for _ in range(400):
+        tt += 0.1; near = stairs[np.hypot(stairs[:, 0] - P[0], stairs[:, 1] - P[1]) < 0.7]
+        bz.observe(tt, dict(ball=[], opp=[], goals=[], obst=near), tuple(P)); c_ = bz.decide(tuple(P)); sts.append(bz.state)
+        P[2] = wrap(P[2] - c_.get("rx", 0.0) * 0.9 * 0.1)                     # crude kinematics: rx < 0 turns left
+        vx, vy = -c_.get("ly", 0.0) * 0.8, -c_.get("lx", 0.0) * 0.8
+        P[0] += (math.cos(P[2]) * vx - math.sin(P[2]) * vy) * 0.1; P[1] += (math.sin(P[2]) * vx + math.cos(P[2]) * vy) * 0.1
+        if bz.exploring and bz.exp_goal is not None and np.hypot(P[0] + 1.93, P[1] + 1.08) > 0.5: break
+    assert bz.exploring and bz.exp_goal is not None, sts[-5:]
+    assert np.linalg.norm(bz.exp_goal - np.array([-1.93, -1.08])) > 0.5 and np.hypot(P[0] + 1.93, P[1] + 1.08) > 0.5, (bz.exp_goal, P)
+    out.append(f"corner + hidden ball: scan ended after {sts.index('explore') if 'explore' in sts else sts.index('push_obst')} ticks -> EXPLORE to {np.round(bz.exp_goal, 2)}, walked {np.hypot(P[0] + 1.93, P[1] + 1.08):.2f} m ok")
     out.append(f"return to kickoff: A* path {len(pth)} cells round the centre circle, waits on the spot ok")
     return out
 
