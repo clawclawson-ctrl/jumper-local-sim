@@ -167,7 +167,8 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
     obst_geom = np.array([(_root(model.geom_bodyid[g]) in _pbset) or _gn[g].startswith(("wall_", "corner_", "goal")) for g in range(model.ngeom)])
     bumps = {"A": 0, "B": 0}; bump_prev = {"A": False, "B": False}
     rng = np.random.default_rng(SEED)
-    brains = {k: SB.Brain(k, np.random.default_rng(SEED * 31 + i), pushable=os.environ.get("SC_PUSHABLE", "1") == "1") for i, k in enumerate(("A", "B"))}
+    brains = {k: SB.Brain(k, np.random.default_rng(SEED * 31 + i), pushable=os.environ.get("SC_PUSHABLE", "1") == "1",
+                       aggression=float(os.environ.get("SC_AGGR_" + k, "0.7"))) for i, k in enumerate(("A", "B"))}
     for b in brains.values(): b.reset(kickoff=True, t=0.0); b.ball = np.array(BALL0)
     HOOK = None
     if os.environ.get("SC_LIVE", "0") == "1" or os.environ.get("JHS_LIVE_DIR"):

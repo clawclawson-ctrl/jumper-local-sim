@@ -187,7 +187,7 @@ class H(BaseHTTPRequestHandler):
                 elif info.get("kind") == "soccer":
                     proc, rd = runner.start_soccer(info["path"], setup=b.get("setup"), seed=int(b.get("seed", 1)), tmax=float(b.get("tmax", 300)),
                                                    speed=float(b.get("speed", 1.0)), live=bool(b.get("live", True)), physics_hz=b.get("physics_hz"),
-                                                   pushable=bool(b.get("pushable", True)), goals_to_win=int(b.get("goals_to_win", 3)))
+                                                   pushable=bool(b.get("pushable", True)), goals_to_win=int(b.get("goals_to_win", 3)), aggression=b.get("aggression"))
                 elif info.get("kind") == "tidy_vision":
                     proc, rd = runner.start_tidy(info["path"], seed=int(b.get("seed", 1)), tmax=float(b.get("tmax", 420)))
                 else:

@@ -22,6 +22,9 @@ from .field import FX, FY, GW, BALL_R, ATTACK, wall_clear, goal_centre, own_goal
 vision.CLASSES["football"] = dict(vision.CLASSES["football"], top=2 * BALL_R)
 
 
+OCCL = __import__("os").environ.get("SOCCER_OCCL", "1") == "1"      # occlusion-aware ball memory (ball hidden by the other crab)
+PRESS = __import__("os").environ.get("SOCCER_PRESS", "1") == "1"    # press / tackle when the other crab has the ball
+OCCL_H, DRIBBLE_OFF = 4.0, 0.25
 PREDICT = __import__("os").environ.get("SOCCER_PREDICT", "1") == "1"    # ball track prediction + intercept (own sensing only)
 BALL_DECEL, WALL_E, PRED_H, INT_H = 0.25, 0.6, 2.5, 1.5                # m/s^2 rolling decel, wall restitution, horizons (s)
 
@@ -126,8 +129,8 @@ def perceive(team, img, selfmask, cam_pos, cam_R, cam, tof, tof_pos, tof_R, tof_
 
 
 class Brain:
-    def __init__(self, team, rng=None, pushable=False):
-        self.team = team; self.dirx = ATTACK[team]; self.pushable = bool(pushable); self.mem = Memory()
+    def __init__(self, team, rng=None, pushable=False, aggression=0.7):
+        self.aggr = float(np.clip(aggression, 0.0, 1.0)); self.team = team; self.dirx = ATTACK[team]; self.pushable = bool(pushable); self.mem = Memory()
         self.exp_goal = None; self.exp_path = []; self.exp_t = -1e9
         self.rng = rng or np.random.default_rng(0)
         self.reset(kickoff=False, t=0.0)
@@ -140,7 +143,7 @@ class Brain:
         self.state = "kickoff"; self.sub = ""; self.t = t; self.hold = None; self.hold_until = 0.0
         self.stuck_ref = None; self.scan_acc = 0.0; self.scan_prev = None; self.search_goal = None
         self.shoot_until = 0.0; self.side = 1.0; self.last_cmd = {}; self.wait_until = t + 0.6; self.obst = np.zeros((0, 3))
-        self.target = None; self.bv0 = np.zeros(2); self.pred_fail = False; self.searching = False; self.exploring = False; self.scan_t0 = t; self.wd = (t, np.zeros(2))
+        self.target = None; self.occl_t = None; self.opp_v = np.zeros(2); self.opp_h = 0.0; self.bv0 = np.zeros(2); self.pred_fail = False; self.searching = False; self.exploring = False; self.scan_t0 = t; self.wd = (t, np.zeros(2))
 
     # ---- beliefs ----------------------------------------------------------------------------------------------------
     def observe(self, t, per, pose):
@@ -163,9 +166,58 @@ class Brain:
         else:
             self.bv *= 0.9
         if per["opp"]:
-            d = min(per["opp"], key=lambda d: d["rng"]); self.opp = np.asarray(d["xy"], float); self.opp_t = t
+            d = min(per["opp"], key=lambda d: d["rng"]); z = np.asarray(d["xy"], float)
+            if self.opp is not None and 0.05 < t - self.opp_t < 1.5:            # opponent track: velocity + heading (own detections)
+                v = (z - self.opp) / (t - self.opp_t)
+                if np.linalg.norm(v) < 1.5: self.opp_v = 0.6 * self.opp_v + 0.4 * v
+            if float(np.linalg.norm(self.opp_v)) > 0.06: self.opp_h = math.atan2(self.opp_v[1], self.opp_v[0])
+            elif self.t - self.ball_t < 2.0: self.opp_h = math.atan2(self.ball[1] - z[1], self.ball[0] - z[0])   # assume it faces the ball
+            self.opp = z; self.opp_t = t
+        # occlusion: the ball just vanished where the other crab is (at / behind its range, same bearing) -> OCCLUDED, not lost
+        if OCCL:
+            me = np.array([x, y])
+            if per["ball"]: self.occl_t = None
+            elif self.occl_t is None and per["opp"] and 0.0 < t - self.ball_t < 0.6:
+                db_, do_ = np.linalg.norm(self.ball - me), np.linalg.norm(self.opp - me)
+                ang = abs(wrap(math.atan2(*(self.ball - me)[::-1]) - math.atan2(*(self.opp - me)[::-1])))
+                if (db_ >= do_ - 0.15 and ang < 0.45) or np.linalg.norm(self.ball - self.opp) < 0.35: self.occl_t = t
 
     def ball_age(self): return self.t - self.ball_t
+
+    def press_or_defend(self, me, b):
+        """'press' / 'defend' / None. Opponent has the ball if within 0.35 m of it (or it hides it). Defend only when its
+        time-to-shot is clearly shorter than my time-to-ball; aggression (0 cautious .. 1 aggressive) scales 'clearly'."""
+        if self.opp is None or self.t - self.opp_t > 1.5: return None
+        if float(np.linalg.norm(self.opp - b)) > 0.35 and self.occl_t is None: return None
+        OG = np.array(own_goal(self.team)); tb = float(np.linalg.norm(b - me)) / 0.30
+        ts = float(np.linalg.norm(OG - self.opp)) / max(0.15, float(np.linalg.norm(self.opp_v)))
+        k = 0.4 + 1.6 * (1.0 - self.aggr)                 # aggr 1 -> defend only if ts < 0.4 tb; aggr 0 -> if ts < 2 tb
+        return "defend" if ts < k * tb else "press"
+
+    def press_cmd(self, pose, b):
+        x, y, yaw = pose; me = np.array([x, y]); dec = self.press_or_defend(me, b)
+        if dec is None: return None
+        OG = np.array(own_goal(self.team)); g = (OG - b) / max(1e-6, float(np.linalg.norm(OG - b)))
+        if dec == "defend":
+            self.state = "defend"; self.sub = "defend: it will shoot before I reach the ball"
+            D = b + g * min(0.7, 0.5 * float(np.linalg.norm(OG - b)))
+            return self._drive(pose, D, face_yaw=math.atan2(b[1] - D[1], b[0] - D[0]) if np.linalg.norm(D - me) < 0.5 else None, avoid_ball=True)
+        P = b + g * (BALL_R + 0.20)                       # between the ball and my goal
+        self.counts["press"] = self.counts.get("press", 0) + 1
+        if float(np.linalg.norm(P - me)) > 0.2 and float(np.linalg.norm(b - me)) > 0.3:
+            self.state = "press"; self.sub = "PRESS: the other crab has the ball"
+            return self._drive(pose, P, face_yaw=math.atan2(b[1] - y, b[0] - x) if np.linalg.norm(P - me) < 0.6 else None)
+        # TACKLE: push into the ball from the side to knock it loose
+        perp = np.array([-g[1], g[0]]); sg = 1.0 if (me - b) @ perp >= 0 else -1.0
+        self.state = "tackle"; self.sub = "TACKLE: knocking the ball loose"; self.counts["tackle"] = self.counts.get("tackle", 0) + 1
+        return self._drive(pose, b - perp * sg * 0.12, speed=SHOOT, avoid=False)
+
+    def occl_est(self):
+        """(ball estimate, confidence) while the ball is hidden by the other crab: just in front of it along its heading."""
+        if self.occl_t is None or self.opp is None: return None, 0.0
+        conf = max(0.0, 1.0 - (self.t - self.occl_t) / OCCL_H)
+        if conf <= 0.0 or self.t - self.opp_t > 1.5: return None, 0.0
+        return self.opp + DRIBBLE_OFF * np.array([math.cos(self.opp_h), math.sin(self.opp_h)]), conf
 
     def ball_now(self, extra=0.0):
         """my ball estimate moved forward to now (+extra s) along its track."""
@@ -351,6 +403,16 @@ class Brain:
     def _decide(self, pose):
         x, y, yaw = pose; me = np.array([x, y]); t = self.t
         # ---- search ----
+        # ball hidden by the other crab: approach on a slight arc to the side to see it again (no scanning)
+        E, conf = self.occl_est() if (OCCL and self.ball_age() > 0.3) else (None, 0.0)
+        if E is not None and conf > 0.25:
+            self.ball = E.copy(); self.ball_t = t - 0.31                      # keep the estimate fresh enough for ball play
+            dE = float(np.linalg.norm(E - me))
+            if dE > 0.6 or not PRESS:
+                v = E - me; perp = np.array([-v[1], v[0]]) / max(1e-6, dE); sg = 1.0 if (self.opp - me) @ perp <= 0 else -1.0
+                self.counts["occluded"] = self.counts.get("occluded", 0) + 1
+                self.state = "occluded"; self.sub = f"OCCLUDED: ball behind the other crab ({conf:.0%} sure), arcing round"
+                return self._drive(pose, E + perp * sg * 0.35 - v / max(1e-6, dE) * 0.3, avoid_ball=False)
         # lost a MOVING ball: go to where my track says it rolled before scanning (up to PRED_H s, confidence decays)
         if PREDICT and 0.6 < self.ball_age() <= PRED_H and not self.pred_fail and float(np.linalg.norm(self.bv0)) > 0.2:
             P = self.ball_now(); conf = max(0.0, 1.0 - self.ball_age() / PRED_H)
@@ -377,6 +439,10 @@ class Brain:
             return self._explore(pose)
         self.searching = False; self.exploring = False
         b = self.ball_now(); db = float(np.linalg.norm(b - me))
+        # ---- the other crab has the ball: PRESS (own-goal side) then TACKLE, unless it will shoot before I get there ----
+        if PRESS:
+            pr = self.press_cmd(pose, b)
+            if pr is not None: return pr
         # ---- defend: the other crab is clearly closer to the ball ----
         opp_ok = self.opp is not None and t - self.opp_t < 2.0
         if opp_ok:
@@ -453,7 +519,7 @@ def unit():
     out.append("ball behind me -> go round it (not through) ok")
     br3 = Brain("B"); br3.reset(kickoff=True, t=0.0)
     br3.observe(1.0, dict(ball=[dict(xy=np.array([0.3, 0.0]), rng=1.0, bbox=(0, 0, 1, 1))], opp=[dict(xy=np.array([0.0, 0.0]), rng=1.2)], goals=[], obst=np.zeros((0, 3))), (1.4, 0.4, math.pi))
-    br3.decide((1.4, 0.4, math.pi)); assert br3.state == "defend", br3.state; out.append("opponent closer and behind the ball -> defend ok")
+    br3.decide((1.4, 0.4, math.pi)); assert br3.state == ("press" if PRESS else "defend"), br3.state; out.append("opponent with the ball, standing still -> " + br3.state + " ok")
     br4 = Brain("A"); br4.reset(kickoff=True, t=0.0); br4.t = 5.0
     br4.observe(5.0, dict(ball=[], opp=[], goals=[], obst=np.zeros((0, 3))), (0.0, 0.0, 0.0))
     c = br4.decide((0.0, 0.0, 0.0)); assert br4.state == "search" and abs(c.get("rx", 0)) >= 0.5, (br4.state, c); out.append("ball lost -> scan ok")
@@ -544,6 +610,26 @@ def unit():
     clr = min(float(np.min(np.hypot(crate[:, 0] - q[0], crate[:, 1] - q[1]))) for q in pc)
     assert pc and clr >= CRAB_R, clr
     out.append(f"clearance: path round a crate keeps {clr:.2f} m >= half-span {CRAB_R} m ok")
+    if OCCL:
+        bo = Brain("A"); bo.reset(kickoff=None, t=0.0); Pm = (-1.0, 0.0, 0.0)
+        for tt, opx in ((1.0, 0.2), (1.1, 0.15), (1.2, 0.1)):     # opponent walking toward me, ball just in front of it, then hidden
+            bo.observe(tt, dict(ball=[dict(xy=np.array([opx - 0.25, 0.0]), rng=1.0, bbox=(0, 0, 1, 1))] if tt < 1.2 else [], opp=[dict(xy=np.array([opx, 0.0]), rng=1.1)],
+                                goals=[], obst=np.zeros((0, 3))), Pm)
+        bo.observe(1.6, dict(ball=[], opp=[dict(xy=np.array([0.05, 0.0]), rng=1.05)], goals=[], obst=np.zeros((0, 3))), Pm)
+        E, cf = bo.occl_est(); assert bo.occl_t is not None and E is not None and E[0] < 0.05 and cf > 0.7, (bo.occl_t, E, cf)
+        bo.decide(Pm); assert bo.state in ("occluded", "press", "tackle"), bo.state
+        out.append(f"occlusion: ball hidden by the walking opponent -> estimate {np.round(E, 2)} ({cf:.0%}), state {bo.state} ok")
+    if PRESS:
+        def mk(ag, ov):
+            q = Brain("A", aggression=ag); q.reset(kickoff=None, t=0.0); q.t = 1.0; q.ball = np.array([0.5, 0.0]); q.ball_t = 1.0
+            q.opp = np.array([0.7, 0.0]); q.opp_t = 1.0; q.opp_v = np.array(ov); return q
+        me_ = np.array([-0.5, 0.3])
+        assert mk(0.7, (-0.1, 0.0)).press_or_defend(me_, np.array([0.5, 0.0])) == "press"           # slow opponent with the ball -> press
+        assert mk(0.7, (-0.9, 0.0)).press_or_defend(np.array([-1.5, 1.2]), np.array([0.5, 0.0])) == "defend"   # fast + far -> defend
+        mid = mk(1.0, (-0.6, 0.0)).press_or_defend(me_, np.array([0.5, 0.0])), mk(0.0, (-0.6, 0.0)).press_or_defend(me_, np.array([0.5, 0.0]))
+        assert mid == ("press", "defend"), mid
+        q = mk(0.7, (-0.1, 0.0)); c_ = q.decide((-0.5, 0.3, 0.0)); assert q.state == "press", q.state
+        out.append("press: slow ball-carrier -> press; fast + far -> defend; same case aggression 1 -> press, 0 -> defend ok")
     out.append(f"return to kickoff: A* path {len(pth)} cells round the centre circle, waits on the spot ok")
     return out
 

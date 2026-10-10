@@ -34,6 +34,7 @@ def main():
     ap.add_argument("--physics", type=int, choices=[1000, 500, 200], help="physics rate in Hz (default 1000; --fast = 200)")
     ap.add_argument("--setup", help="soccer: JSON file {ball: [x,y], A: [x,y,deg], B: [x,y,deg], props: {id: [x,y,deg]}}")
     ap.add_argument("--goals-to-win", type=int, default=3, choices=range(1, 11), metavar="1-10", help="soccer: first to this many goals wins (default 3; --tmax is the cap)")
+    ap.add_argument("--aggression", default="0.7,0.7", help="soccer: RED,BLUE aggression 0 (cautious) .. 1 (aggressive), default 0.7,0.7")
     ap.add_argument("--obstacles", type=int, metavar="SEED", help="soccer: a random (mirror-symmetric) obstacle layout from this seed")
     ap.add_argument("--render-only", metavar="RUN_DIR", help="skip the sim: just save the MP4 of an earlier run")
     au = ap.add_argument_group("optional audio for the MP4 (video stays 1x and unchanged; AAC 192k)")
@@ -136,7 +137,8 @@ def soccer(a, info, audio):
     tmax = a.tmax or 300.0; seed = a.seed if a.seed is not None else (a.random if a.random is not None else 1)
     proc, rd = runner.start_soccer(info["path"], setup=setup, seed=seed, tmax=tmax, speed=0.0 if a.uncapped else 1.0, live=not a.no_live,
                                    physics_hz=a.physics or (200 if a.fast else None), pushable=not a.fixed_obstacles,
-                                   goals_to_win=a.goals_to_win)
+                                   goals_to_win=a.goals_to_win,
+                                   aggression=dict(zip("AB", (float(v) for v in (a.aggression.split(",") * 2)[:2]))))
     print(f"obstacles: {props or 'none'} ({'fixed' if a.fixed_obstacles else 'pushable'})\nrun folder: {rd}\n(SIM-ONLY VISION CONCEPT) crab soccer, "
           f"{tmax:.0f} sim-seconds; Ctrl-C stops early and keeps the recording.", flush=True)
     last = 0

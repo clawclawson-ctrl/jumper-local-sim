@@ -108,7 +108,7 @@ def start_flybrain(app, toys=None, start=None, seed=1, tmax=120.0, speed=1.0, li
     return proc, rd
 
 
-def start_soccer(app, setup=None, seed=1, tmax=300.0, speed=1.0, live=True, live_size=(1280, 720), physics_hz=None, pushable=True, goals_to_win=3):
+def start_soccer(app, setup=None, seed=1, tmax=300.0, speed=1.0, live=True, live_size=(1280, 720), physics_hz=None, pushable=True, goals_to_win=3, aggression=None):
     """1v1 crab soccer (jhs/soccer/run.py) on the soccer field. setup = {ball: [x, y], A: [x, y, deg], B: [x, y, deg],
     props: {obstacle id: [x, y, deg]}} (validated by jhs.soccer.field.validate); obstacles not listed stay parked outside."""
     from .soccer import field as SF
@@ -123,7 +123,7 @@ def start_soccer(app, setup=None, seed=1, tmax=300.0, speed=1.0, live=True, live
     (rd / "setup.json").write_text(json.dumps(setup, indent=1))
     env = base_env()
     env.update(VS_SEED=str(int(seed)), VS_OUT=str(rd), VS_TMAX=str(float(tmax)), VS_SAVEVIS="1", JHS_SPEED=str(float(speed)), SC_LIVE="1",
-               JHS_LIVE="1" if live else "0", JHS_LIVE_DIR=str(rd / "live"), JHS_STOP=str(rd / "STOP"), SC_SETUP=str(rd / "setup.json"), SC_PUSHABLE="1" if pushable else "0", SC_GOALS=str(max(1, min(10, int(goals_to_win)))),
+               JHS_LIVE="1" if live else "0", JHS_LIVE_DIR=str(rd / "live"), JHS_STOP=str(rd / "STOP"), SC_SETUP=str(rd / "setup.json"), SC_PUSHABLE="1" if pushable else "0", SC_AGGR_A=str((aggression or {}).get("A", 0.7)), SC_AGGR_B=str((aggression or {}).get("B", 0.7)), SC_GOALS=str(max(1, min(10, int(goals_to_win)))),
                JHS_LIVE_W=str(live_size[0]), JHS_LIVE_H=str(live_size[1]))
     from .pushable import variant
     scene = variant(MAPS["soccer"], rd / "scene.map", pushable=bool(pushable), moves=setup["props"] or None)
