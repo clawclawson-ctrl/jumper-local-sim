@@ -6,7 +6,7 @@ import json, os, sys, time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from jhs.overlay import Overlay, FollowCam  # noqa: E402
+from jhs.overlay import Overlay, FollowCam, tidy_in_bin  # noqa: E402
 
 
 def _atomic_write(path: Path, data: bytes):
@@ -14,9 +14,9 @@ def _atomic_write(path: Path, data: bytes):
 
 
 class Hook:
-    def __init__(self, sim, toys, rug, room, outd, dt, kind="hide_seek"):
+    def __init__(self, sim, toys, rug, room, outd, dt, kind="hide_seek", bins=None):
         import mujoco
-        self.mj = mujoco; self.sim = sim; self.toys = dict(toys); self.rug = rug; self.dt = dt
+        self.mj = mujoco; self.sim = sim; self.toys = dict(toys); self.rug = rug; self.room = room; self.bins = dict(bins or {}); self.dt = dt
         self.dir = Path(os.environ.get("JHS_LIVE_DIR", str(Path(outd) / "live"))); self.dir.mkdir(parents=True, exist_ok=True)
         self.stopf = Path(os.environ.get("JHS_STOP", str(self.dir / "STOP")))
         self.every = float(os.environ.get("JHS_LIVE_EVERY", 0.25))          # sim seconds between live frames
@@ -48,6 +48,9 @@ class Hook:
         if mp is not None: self.mp = mp
 
     def _n_truth(self, live):
+        if self.kind == "tidy":
+            bins = {k: live.xpos[b][:2] for k, b in self.bins.items()}
+            return sum(tidy_in_bin(live.xpos[b][:2], k, bins) for k, b in self.toys.items())
         cx, cy, hx, hy = self.rug
         return sum(abs(live.xpos[b][0] - cx) < hx and abs(live.xpos[b][1] - cy) < hy for b in self.toys.values())
 
@@ -71,8 +74,9 @@ class Hook:
                 self.ov.draw(frame, self.meta, self.img, self.tof, t, speed_label=lab, props=footprints(model, live, self.pg), path=self.path,
                              floor=self.mp)
             else:
+                extra = dict(task="tidy", room=self.room) if self.kind == "tidy" else {}
                 self.ov.draw(frame, self.meta, self.img, self.tof, self.mp, t, self._n_truth(live), self.ntoys,
-                             speed_label=lab, props=footprints(model, live, self.pg))
+                             speed_label=lab, props=footprints(model, live, self.pg), **extra)
             import io
             buf = io.BytesIO(); frame.save(buf, "JPEG", quality=82); _atomic_write(self.dir / "live.jpg", buf.getvalue())
             self.nframes += 1

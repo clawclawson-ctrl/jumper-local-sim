@@ -7,9 +7,23 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from . import PKG
 
-COL = {"ball": (60, 140, 255), "duck": (255, 205, 40), "duck2": (255, 205, 40), "minifb": (240, 240, 240), "football": (200, 200, 255)}
-NAME = {"ball": "blue ball", "duck": "yellow duck", "duck2": "2nd yellow duck", "minifb": "mini football", "football": "football"}
+COL = {"ball": (60, 140, 255), "duck": (255, 205, 40), "duck2": (255, 205, 40), "minifb": (240, 240, 240), "football": (200, 200, 255),
+       "basket": (196, 154, 92), "crate": (72, 128, 214)}
+NAME = {"ball": "blue ball", "duck": "yellow duck", "duck2": "2nd yellow duck", "minifb": "mini football", "football": "football",
+        "basket": "basket", "crate": "blue crate"}
 ROOM = (-2.65, -2.65, 2.65, 2.65)
+# Tidy-up floor plan, and the same "in the bin" test tidy_vision.py uses to score (BINR + toy radius + 0.20).
+TIDY_ROOM = (-1.95, -2.75, 4.35, 1.80)
+TIDY_DEST = {"ball": "basket", "minifb": "basket", "duck": "crate"}
+TIDY_REACH = {"ball": 0.18 + 0.055 + 0.20, "minifb": 0.18 + 0.02 + 0.20, "duck": 0.16 + 0.045 + 0.20}
+
+
+def tidy_in_bin(xy, cls, bins) -> bool:
+    """True when toy xy is inside the correct bin. bins: {name: (x, y)}. Display scoring only."""
+    dest = TIDY_DEST.get(cls)
+    if not dest or dest not in bins: return False
+    bx, by = bins[dest][0], bins[dest][1]
+    return math.hypot(float(xy[0]) - float(bx), float(xy[1]) - float(by)) < TIDY_REACH[cls]
 
 
 def turbo(x):
@@ -29,8 +43,18 @@ def tof_image(r):
     return img
 
 
-def status_text(m, ntoys=None):
+def status_text(m, ntoys=None, task="hide_seek"):
     st = m.get("state"); foc = m.get("focus")
+    if task == "tidy":
+        if st == "finish" and ntoys is not None and len(m.get("gathered", [])) < ntoys: return "time's up"
+        if st == "push" and foc: return f"pushing the {NAME.get(foc, foc)} to its bin"
+        if st == "approach" and foc: return f"going to the {NAME.get(foc, foc)}"
+        if st == "approach": return "going to look closer"
+        if st == "scan": return "looking around"
+        if st == "explore": return "searching the room"
+        if st == "start": return "getting ready"
+        if st == "finish": return "all sorted!"
+        return str(st)
     if st == "finish" and ntoys is not None and len(m.get("gathered", [])) < ntoys: return "time's up -- bow and dance"
     if st == "push" and foc: return f"pushing the {NAME.get(foc, foc)} onto the rug"
     if st == "approach" and foc: return f"going round to the {NAME.get(foc, foc)}"
@@ -49,7 +73,7 @@ class Overlay:
         self.fdet = ImageFont.truetype(str(PKG / "fonts" / "DejaVuSans-Bold.ttf"), 18)
         self.f4 = F("DejaVuSans-Bold.ttf", 18); self.f5 = F("DejaVuSans-Bold.ttf", 30); self.f6 = F("DejaVuSans.ttf", 17)
 
-    def draw(self, img, meta, cam_img, tof, mp, t, n_truth, ntoys, speed_label="1x speed", banner=None, extra=None, props=None):
+    def draw(self, img, meta, cam_img, tof, mp, t, n_truth, ntoys, speed_label="1x speed", banner=None, extra=None, props=None, task="hide_seek", room=None):
         """img: PIL RGB WxH of the 3D view. meta: the brain's per-frame record. cam_img: PIL/ndarray onboard frame (640x480).
         tof: 42x54 ranges. mp: coverage map (NX x NY, 0/1/2) or None. n_truth: toys on the rug by SIM TRUTH (display only).
         props: [(id, [4 world-xy corners])] where the obstacles are NOW (sim truth, display only), drawn as outlines on the map."""
@@ -71,11 +95,12 @@ class Overlay:
         d.text((px + S(40), py + PH + S(40) + TH + S(6)), "dToF depth, 54x42 zones (red = near, blue = far)", font=self.f3, fill=(255, 255, 255))
         mx0, my0 = S(24), H - S(110) - MS - S(40)
         d.rectangle([mx0 - S(10), my0 - S(40), mx0 + MS + S(10), my0 + MS + (S(50) if props else S(32))], fill=(0, 0, 0, 160))
-        d.text((mx0, my0 - S(34)), "Jumper's own map: searched / not yet", font=self.f6, fill=(255, 255, 255))
+        d.text((mx0, my0 - S(34)), "room map: crab, seen toys, bins" if task == "tidy" else "Jumper's own map: searched / not yet", font=self.f6, fill=(255, 255, 255))
         if mp is not None:
             colm = np.array([[38, 38, 42], [70, 150, 95], [215, 90, 70]], np.uint8)
             img.paste(Image.fromarray(colm[np.asarray(mp).T[::-1]]).resize((MS, MS), Image.NEAREST), (mx0, my0))
-        def to_px(x, y): return mx0 + (x - ROOM[0]) / (ROOM[2] - ROOM[0]) * MS, my0 + (ROOM[3] - y) / (ROOM[3] - ROOM[1]) * MS
+        bounds = room if room is not None else ROOM
+        def to_px(x, y): return mx0 + (x - bounds[0]) / (bounds[2] - bounds[0]) * MS, my0 + (bounds[3] - y) / (bounds[3] - bounds[1]) * MS
         for _k, P in (props or []):
             d.polygon([to_px(x, y) for x, y in P], outline=(235, 235, 235), width=max(1, S(1.5)))
         if meta.get("rug"):
@@ -86,21 +111,28 @@ class Overlay:
             d.line([gx - k, gy - k, gx + k, gy + k], fill=(255, 255, 255), width=2); d.line([gx - k, gy + k, gx + k, gy - k], fill=(255, 255, 255), width=2)
         for cls, x, y, _srt in meta.get("tracks", []):
             qx, qy = to_px(x, y); k = S(5); d.ellipse([qx - k, qy - k, qx + k, qy + k], fill=COL.get(cls, (255, 255, 255)), outline=(0, 0, 0))
+        if task == "tidy":
+            for name, x, y in meta.get("bins") or []:
+                qx, qy = to_px(x, y); k = S(9)
+                d.rectangle([qx - k, qy - k, qx + k, qy + k], outline=COL.get(name, (255, 255, 255)), width=max(2, S(2)))
         if meta.get("pose"):
             bx, by, byaw = meta["pose"]; qx, qy = to_px(bx, by); a, b = S(17), S(11)
             d.polygon([(qx + a * math.cos(-byaw), qy + a * math.sin(-byaw)), (qx + b * math.cos(-byaw + 2.4), qy + b * math.sin(-byaw + 2.4)),
                        (qx + b * math.cos(-byaw - 2.4), qy + b * math.sin(-byaw - 2.4))], fill=(255, 40, 40), outline=(255, 255, 255))
-        d.text((mx0, my0 + MS + S(6)), "green searched, red obstacle, tan rug, dots toys", font=self.f6, fill=(230, 230, 230))
+        d.text((mx0, my0 + MS + S(6)), "dots: what the crab has seen; squares: bins now (SIM TRUTH)" if task == "tidy" else "green searched, red obstacle, tan rug, dots toys", font=self.f6, fill=(230, 230, 230))
         if props: d.text((mx0, my0 + MS + S(27)), "white outlines: props now (SIM TRUTH)", font=self.f6, fill=(230, 230, 230))
         ng = len(meta.get("gathered", []))
+        tidy = task == "tidy"
         d.rectangle([S(20), S(20), S(840), S(140)], fill=(0, 0, 0, 150))
-        d.text((S(36), S(30)), "Jumper Hide & Seek", font=self.f1, fill=(255, 255, 255))
-        d.text((S(36), S(78)), f"{status_text(meta, ntoys)}   (crab's own count: {ng}/{ntoys} on the rug)", font=self.f2, fill=(255, 230, 120))
+        d.text((S(36), S(30)), "Jumper Tidy-Up" if tidy else "Jumper Hide & Seek", font=self.f1, fill=(255, 255, 255))
+        d.text((S(36), S(78)), f"{status_text(meta, ntoys, task)}   (crab's own count: {ng}/{ntoys} {'sorted' if tidy else 'on the rug'})", font=self.f2, fill=(255, 230, 120))
         d.rectangle([S(20), S(148), S(840), S(188)], fill=(0, 0, 0, 150))
-        d.text((S(36), S(155)), f"scorer (SIM TRUTH, not used by the crab): {n_truth}/{ntoys} on the rug", font=self.f3, fill=(200, 255, 200))
+        d.text((S(36), S(155)), f"scorer (SIM TRUTH, not used by the crab): {n_truth}/{ntoys} {'in the right bin' if tidy else 'on the rug'}", font=self.f3, fill=(200, 255, 200))
         d.rectangle([S(20), H - S(100), S(1270), H - S(20)], fill=(0, 0, 0, 165))
         d.text((S(34), H - S(96)), "SIM-ONLY VISION CONCEPT", font=self.f5, fill=(255, 120, 120))
-        d.text((S(34), H - S(56)), f"{ntoys} toys to find by camera + dToF and push onto the rug. Simulation only, not real-robot capable.", font=self.f3, fill=(255, 255, 255))
+        foot = (f"{ntoys} toys to sort by camera + dToF into the basket or the crate. Simulation only, not real-robot capable." if tidy
+                else f"{ntoys} toys to find by camera + dToF and push onto the rug. Simulation only, not real-robot capable.")
+        d.text((S(34), H - S(56)), foot, font=self.f3, fill=(255, 255, 255))
         clock = f"sim time t = {t:5.1f} s   ({speed_label})"; cw = int(d.textlength(clock, font=self.f2)) + S(28)
         d.rectangle([W - cw - S(14), H - S(64), W - S(14), H - S(20)], fill=(0, 0, 0, 165))
         d.text((W - cw, H - S(56)), clock, font=self.f2, fill=(240, 240, 240))

@@ -40,9 +40,34 @@ item("toolkit", lambda: (TOOLKIT / "scripts" / "play.py").exists() or (_ for _ i
 def apps():
     from jhs.apps import inspect
     a = ROOT / "apps" / "jumper_hide_seek_vision.app"; i = inspect(a)
-    assert i["ok"] and i["kind"] == "hide_seek", i
+    assert i["ok"] and i["kind"] == "hide_seek" and i.get("local_hooks"), i
     return f"{a.name}: {i['kind']}, controller {i['controller']}, local hooks {i['local_hooks']}"
 item("hide & seek app", apps)
+def tidy():
+    from jhs.apps import inspect
+    a = ROOT / "apps" / "jumper_tidy_vision.app"
+    if not a.exists(): return "apps/jumper_tidy_vision.app not present (skipped)"
+    i = inspect(a)
+    assert i["ok"] and i["kind"] == "tidy_vision" and i.get("local_hooks"), i
+    m = ROOT / "maps" / "jumper-tidy-room.map"; assert m.exists(), "maps/jumper-tidy-room.map missing"
+    return f"{a.name}: {i['kind']}, local hooks {i['local_hooks']}, room map {m.stat().st_size} B"
+item("tidy-up vision app", tidy)
+def tidy_score():
+    from PIL import Image
+    import numpy as np
+    from jhs.overlay import tidy_in_bin, Overlay, TIDY_ROOM
+    basket, crate = (1.0, 0.0), (-1.0, 0.0); bins = {"basket": basket, "crate": crate}
+    assert tidy_in_bin((1.2, 0.0), "ball", bins) and tidy_in_bin((1.2, 0.0), "minifb", bins)
+    assert not tidy_in_bin((1.2, 0.0), "duck", bins) and tidy_in_bin((-1.1, 0.1), "duck", bins)
+    assert not tidy_in_bin((0.0, 0.0), "ball", bins)
+    ov = Overlay(1280, 720); tof = np.ones((42, 54), np.float32); cam = Image.new("RGB", (64, 48), (80, 80, 80))
+    meta = dict(state="push", focus="duck", dets=[dict(cls="duck", bbox=[8, 8, 30, 30], rng=0.8)], gathered=["ball"],
+                pose=[0.2, -0.4, 0.5], tracks=[("duck", 0.3, -0.2, False), ("ball", 1.1, 0.1, True)],
+                bins=[("basket", 1.0, 0.2), ("crate", -0.6, 0.4)])
+    ov.draw(Image.new("RGB", (1280, 720), (20, 20, 20)), meta, cam, tof, None, 1.5, 1, 3, task="tidy", room=TIDY_ROOM)
+    ov.draw(Image.new("RGB", (1280, 720), (20, 20, 20)), dict(state="scan", dets=[], gathered=[]), None, None, None, 1.0, 0, 3)
+    return "ball and mini football count for the basket, the duck for the crate; both overlays draw"
+item("tidy scorer and live overlay", tidy_score)
 def flybrain():
     from jhs.apps import inspect
     a = ROOT / "apps" / "flybrain.app"

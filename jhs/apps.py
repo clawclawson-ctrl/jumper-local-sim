@@ -42,7 +42,12 @@ def inspect(path) -> dict:
         info["warning"] = ("crab soccer 1v1: two crabs, each steered by its own soccer brain from its own sim camera + dToF + pose "
                            "(SIM-ONLY VISION CONCEPT). Experimental: only a few test matches so far.")
     if kind == "tidy_vision":
-        info["warning"] = "a tidy-up vision app: runs on the shipped tidy-up room with its own toy layout (no hand placement)"
+        info["sim_only"] = True
+        if info.get("local_hooks"):
+            info["warning"] = ("tidy-up vision: the seed places the toys; the crab sorts them into the basket and the crate. "
+                               "Live picture, and an MP4 afterwards.")
+        else:
+            info["warning"] = "this tidy-up app's brain has no live-picture hook, so the page can only show the log"
     return info
 
 

@@ -6,7 +6,9 @@ layout.json: {"ball": [x, y], "duck": [x, y], "duck2": [x, y]}  (metres; optiona
 With --app apps/flybrain.app the fly-inspired rules drive the crab instead (no task, no score; default --tmax 120;
 toys only if you give --place/--random).
 Crab soccer: ./run.sh --headless --app apps/jumper_soccer_vision.app [--tmax 300] [--seed N] [--obstacles SEED | --setup setup.json]
-             [--move crateNE=1.2,0.8,45] [--goals-to-win 3] [--physics 1000|500|200] [--mp4 OUT.mp4 --size 720]. SIM-ONLY VISION CONCEPT."""
+             [--move crateNE=1.2,0.8,45] [--goals-to-win 3] [--physics 1000|500|200] [--mp4 OUT.mp4 --size 720]. SIM-ONLY VISION CONCEPT.
+Tidy-up vision: ./run.sh --headless --app apps/jumper_tidy_vision.app [--tmax 420] [--seed N] [--uncapped] [--mp4 OUT].
+             The seed places the toys. SIM-ONLY VISION CONCEPT."""
 from __future__ import annotations
 import argparse, json, sys, time
 from pathlib import Path
@@ -55,7 +57,8 @@ def main():
     info = inspect(a.app)
     if not info.get("ok"): sys.exit(f"{a.app}: {info.get('error')}")
     if info["kind"] == "soccer": return soccer(a, info, audio)
-    if info["kind"] not in ("hide_seek", "flybrain"): sys.exit("--headless is for hide & seek, flybrain and soccer apps; use ./run.sh for the others")
+    if info["kind"] == "tidy_vision": return tidy(a, info, audio)
+    if info["kind"] not in ("hide_seek", "flybrain"): sys.exit("--headless is for hide & seek, flybrain, tidy-up vision and soccer apps; use ./run.sh for the others")
     FLY = info["kind"] == "flybrain"
     if a.tmax is None: a.tmax = 120.0 if FLY else 600.0
     start = [0.0, 0.0, 0.0]
@@ -121,6 +124,30 @@ def main():
     if pm: print("obstacles moved by the crab (m, SIM TRUTH): " + ", ".join(f"{k} {v:.2f}" for k, v in pm.items()))
     if a.mp4 or a.mp4_folder:
         render(rd, a, audio)
+
+
+def tidy(a, info, audio):
+    """Tidy-up vision without a window. The seed places the toys. SIM-ONLY VISION CONCEPT."""
+    tmax = a.tmax if a.tmax is not None else 420.0
+    seed = a.seed if a.seed is not None else (a.random if a.random is not None else 1)
+    proc, rd = runner.start_tidy(info["path"], seed=seed, tmax=tmax, speed=0.0 if a.uncapped else 1.0, live=not a.no_live)
+    print(f"run folder: {rd}\n(SIM-ONLY VISION CONCEPT) tidy-up, up to {tmax:.0f} sim-seconds; Ctrl-C stops early and keeps the recording.", flush=True)
+    last = 0
+    try:
+        while proc.poll() is None:
+            time.sleep(2); st = runner.run_state(rd)
+            if time.time() - last > 15 and st.get("t") is not None:
+                last = time.time()
+                print(f"  sim t={float(st['t']):6.1f}s  rate={st.get('rate', 0) or 0:.2f}x  {st.get('state', '')}  scorer (SIM TRUTH) {st.get('n_truth', '?')}/{st.get('ntoys', '?')} in the right bin", flush=True)
+    except KeyboardInterrupt:
+        print("stopping (saving the recording)...", flush=True); (rd / "STOP").write_text("stop")
+        try: proc.wait(120)
+        except KeyboardInterrupt: proc.kill()
+    rp = rd / "result.json"
+    if not rp.exists(): print(runner.run_state(rd).get("log_tail", "")); sys.exit(f"the run ended without a result; see {rd/'log.txt'}")
+    r = json.loads(rp.read_text())
+    print(f"tidy result (SIM TRUTH): sorted into the right bin {r.get('n_correct')}/{r.get('n_toys')}, falls {r.get('falls')}, ended at {r.get('t_end')} s")
+    if a.mp4 or a.mp4_folder: render(rd, a, audio)
 
 
 def soccer(a, info, audio):

@@ -47,7 +47,7 @@ controller.open = lambda *a, **k: NoPad()
 def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None):
     import mujoco, imageio
     from PIL import Image
-    from jhs.overlay import Overlay, FollowCam
+    from jhs.overlay import Overlay, FollowCam, tidy_in_bin, TIDY_ROOM
     sim = env.unwrapped.sim; model, live = sim.env_mjdata(0)
     rmodel = getattr(sim, "render_model", None) or model
     rmodel.vis.global_.offwidth = max(W, rmodel.vis.global_.offwidth); rmodel.vis.global_.offheight = max(H, rmodel.vis.global_.offheight)
@@ -57,12 +57,21 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
     floors = _tz["floor"] if "floor" in _tz.files else None
     mt = np.array([m["t"] for m in meta])
     FLY = INFO.get("kind") == "flybrain"
+    TIDY = INFO.get("kind") == "tidy_vision"
     from jhs.pushable import prop_geoms, footprints
     pg = prop_geoms(rmodel)          # obstacles where they are in this frame (sim truth, display only)
     if FLY:
         from jhs.fly_overlay import FlyOverlay
         ov = FlyOverlay(W, H); fc = FollowCam()
         poses = [(m["pose"][0], m["pose"][1]) for m in meta]
+    elif TIDY:
+        res = json.load(open(RUN / "result.json")); toys = list(res["placed"].keys()); NT = len(toys)
+        truth = [json.loads(l) for l in open(RUN / "truth.jsonl")]; tt = np.array([x["t"] for x in truth])
+        def n_truth(t):   # display only (sim truth); the crab never sees this
+            x = truth[int(np.clip(np.searchsorted(tt, t), 0, len(truth) - 1))]
+            bins = {bn: x[bn][:2] for bn in ("basket", "crate") if bn in x}
+            return sum(tidy_in_bin(x[c][:2], c, bins) for c in toys if c in x)
+        ov = Overlay(W, H); fc = FollowCam()
     else:
         M = np.load(RUN / "maps.npz"); midx, maps = M["idx"], M["maps"]
         res = json.load(open(RUN / "result.json")); toys = list(res["placed"].keys()); NT = len(toys); RUG = INFO.get("rug", [0.0, 0.0, 0.87, 0.64])
@@ -84,6 +93,9 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
         if FLY:
             ov.draw(img, meta[k] if mt[k] <= t + 1e-6 else {}, cam_img, tofs[k], t, speed_label="1x speed", props=footprints(rmodel, rd, pg), path=poses[: k + 1],
                     floor=floors[k] if floors is not None else None)
+        elif TIDY:
+            ov.draw(img, meta[k], cam_img, tofs[k], None, t, n_truth(t), NT, speed_label="1x speed",
+                    props=footprints(rmodel, rd, pg), task="tidy", room=TIDY_ROOM)
         else:
             jm = int(np.clip(np.searchsorted(midx, k, side="right") - 1, 0, len(midx) - 1)) if len(midx) else None
             ov.draw(img, meta[k], cam_img, tofs[k], maps[jm] if jm is not None else None, t, n_truth(t), NT, speed_label="1x speed",

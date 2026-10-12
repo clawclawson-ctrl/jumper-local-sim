@@ -33,6 +33,13 @@ def new_run_dir(tag="run") -> Path:
     d = RUNS / f"{time.strftime('%Y%m%d-%H%M%S')}-{tag}"; d.mkdir(); return d
 
 
+def _point_at_toolkit(script: Path):
+    """An extracted brain that still says /workspace/jumper is pointed at this computer's toolkit."""
+    src = script.read_text()
+    src2 = src.replace('REPO = Path("/workspace/jumper")', 'REPO = Path(os.environ.get("JUMPER_REPO", "/workspace/jumper"))', 1)
+    if src2 != src: script.write_text(src2)
+
+
 def start_hide_seek(app, toys=None, start=None, seed=1, tmax=600.0, speed=1.0, live=True, live_size=(1280, 720), toyset=("ball", "duck", "duck2"), physics_hz=None,
                     pushable=True, moves=None):
     """toys: {name: [x, y]} hand placement, or None for the app's random hidden placement (seed).
@@ -44,6 +51,7 @@ def start_hide_seek(app, toys=None, start=None, seed=1, tmax=600.0, speed=1.0, l
     if info["kind"] != "hide_seek": raise ValueError("not a hide & seek app")
     rd = new_run_dir("hideseek")
     vis = extract_vision(Path(info["path"]), rd / "app_brain")
+    _point_at_toolkit(vis / "hide_seek.py")
     env = base_env()
     env.update(VS_SEED=str(int(seed)), VS_OUT=str(rd), VS_TMAX=str(float(tmax)), VS_SAVEVIS="1", VS_QPOS="1",
                VS_TOYS=",".join(toyset), VS_WALL_CL="0.55", JHS_SPEED=str(float(speed)), JHS_LIVE="1" if live else "0",
@@ -142,17 +150,21 @@ def start_soccer(app, setup=None, seed=1, tmax=300.0, speed=1.0, live=True, live
     return proc, rd
 
 
-def start_tidy(app, seed=1, tmax=420.0):
-    """EXPERIMENTAL: a tidy-up vision app (vision/tidy_vision.py) on the shipped tidy-up room, its own toy layout.
-    No hand placement, no live picture, no MP4 (its recordings use a different format); the log shows progress."""
+def start_tidy(app, seed=1, tmax=420.0, speed=1.0, live=True, live_size=(1280, 720)):
+    """Tidy-up vision app (vision/tidy_vision.py) on the shipped tidy-up room. The seed places the toys.
+    Live picture and, once the run has recorded, an MP4. The toys are not placed by hand."""
     info = inspect(app)
     rd = new_run_dir("tidy")
     vis = extract_vision(Path(info["path"]), rd / "app_brain")
-    src = (vis / "tidy_vision.py").read_text()
-    src = src.replace('REPO = Path("/workspace/jumper")', 'REPO = Path(os.environ.get("JUMPER_REPO", "/workspace/jumper"))', 1)
-    (vis / "tidy_vision.py").write_text(src)
-    env = base_env(); env.update(VS_SEED=str(int(seed)), VS_OUT=str(rd), VS_TMAX=str(float(tmax)), VS_SAVEVIS="0")
-    (rd / "local_run.json").write_text(json.dumps(dict(app=info["path"], scene=str(MAPS["tidy_vision"]), kind="tidy_vision", seed=seed, tmax=tmax), indent=1))
+    _point_at_toolkit(vis / "tidy_vision.py")
+    env = base_env()
+    env.update(VS_SEED=str(int(seed)), VS_OUT=str(rd), VS_TMAX=str(float(tmax)), VS_SAVEVIS="1", VS_QPOS="1",
+               JHS_SPEED=str(float(speed)), JHS_LIVE="1" if live else "0", JHS_LIVE_DIR=str(rd / "live"),
+               JHS_STOP=str(rd / "STOP"), JHS_LIVE_W=str(live_size[0]), JHS_LIVE_H=str(live_size[1]),
+               VS_LIVE_HOOK=str(PKG / "live_hook.py"))
+    (rd / "local_run.json").write_text(json.dumps(dict(app=info["path"], scene=str(MAPS["tidy_vision"]), kind="tidy_vision",
+                                                       seed=seed, tmax=tmax, speed=speed, live=bool(live),
+                                                       started=time.strftime("%Y-%m-%d %H:%M:%S"), info=info), indent=1))
     cmd = [sys.executable, str(vis / "tidy_vision.py"), "--app", info["path"], "--scene", str(MAPS["tidy_vision"]),
            "--backend", "native", "--device", "cpu", "--headless", "--steps", "999999999"]
     log = open(rd / "log.txt", "w")
@@ -203,11 +215,18 @@ def save_mp4(run_dir, out=None, size="1080", folder=None, audio=None):
         folder.mkdir(parents=True, exist_ok=True)
         r = {}
         if (rd / "result.json").exists(): r = json.loads((rd / "result.json").read_text())
-        tag = f"{r.get('n_gathered', '?')}of{r.get('n_toys', '?')}"
-        if r.get("kind") == "soccer":
+        info = json.loads((rd / "local_run.json").read_text()) if (rd / "local_run.json").exists() else {}
+        kind = r.get("kind") or info.get("kind")
+        if kind == "soccer":
             sc = r.get("score") or {}; out = folder / f"jumper-soccer-{rd.name}-RED{sc.get('RED', 0)}-BLUE{sc.get('BLUE', 0)}-1x-{size}p.mp4"
+        elif kind == "flybrain":
+            out = folder / f"jumper-flybrain-{rd.name}-1x-{size}p.mp4"
+        elif kind == "tidy_vision":
+            tag = f"{r.get('n_correct', '?')}of{r.get('n_toys', '?')}"
+            out = folder / f"jumper-tidy-{rd.name}-{tag}-1x-{size}p.mp4"
         else:
-            out = folder / (f"jumper-flybrain-{rd.name}-1x-{size}p.mp4" if r.get("kind") == "flybrain" else f"jumper-hide-seek-{rd.name}-{tag}-1x-{size}p.mp4")
+            tag = f"{r.get('n_gathered', '?')}of{r.get('n_toys', '?')}"
+            out = folder / f"jumper-hide-seek-{rd.name}-{tag}-1x-{size}p.mp4"
     out = Path(out).expanduser()
     log = open(rd / f"render_{out.stem}.log", "w")
     cmd = [sys.executable, "-m", "jhs.render_run", str(rd), str(out), "--size", str(size)]
@@ -243,6 +262,6 @@ def run_state(rd: Path) -> dict:
     try: kind = json.loads((rd / "local_run.json").read_text()).get("kind")
     except Exception: kind = None
     st["kind"] = kind
-    need = ("qpos.npz", "vision_meta.json", "vision_tof.npz", "result.json") + (() if kind in ("flybrain", "soccer") else ("maps.npz",))
+    need = ("qpos.npz", "vision_meta.json", "vision_tof.npz", "result.json") + (() if kind in ("flybrain", "soccer", "tidy_vision") else ("maps.npz",))
     st["can_save_mp4"] = all((rd / f).exists() for f in need)
     return st

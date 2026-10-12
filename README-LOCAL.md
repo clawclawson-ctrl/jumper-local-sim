@@ -13,7 +13,7 @@ This folder lets you run Jumper apps on your own Mac:
   escape, avoidance, fixate/approach, optomotor turns, exploration saccades). Same room, same setup screen, live
   view and MP4. No task and no score. See section 7b. **Not yet tested in full sim trials.**
 - **Plain official apps** (no vision brain). These open MuJoCo's 3D window and you drive the crab yourself.
-- **Tidy-up vision** (`jumper_tidy_vision.app`). Experimental. It runs on the tidy-up room with its own toy layout.
+- **Tidy-up vision** (`jumper_tidy_vision.app`). The seed places the ball, the duck and the mini football in the tidy-up room. The crab sorts the ball and the mini football into the basket and the duck into the crate. You can watch it live and save the run as an MP4.
 
 Nothing is uploaded anywhere. The page you use is served by your own Mac at `http://127.0.0.1`, and no other
 computer can reach it.
@@ -443,9 +443,9 @@ SOCCER_RESULTS
 - **Plain apps** (any app without a vision brain): choose it, pick a room, and press **Start**. MuJoCo's 3D window
   opens and you drive the crab with the keys the Terminal prints (or a gamepad). Close the window to stop. On a Mac
   this window runs under `mjpython`, which the installer sets up.
-- **jumper_tidy_vision.app**: experimental. It runs on the shipped tidy-up room with the app's own toy layout.
-  There is no hand placement, no live picture and no MP4 for this one. Progress shows in the log under the Live box,
-  and its results are written to its run folder.
+- **jumper_tidy_vision.app**: the seed places the toys on the shipped tidy-up room. The crab sorts the ball and the
+  mini football into the basket and the duck into the crate. The live picture shows the run, and you can save an MP4
+  afterwards. Progress also shows in the log under the Live box, and the results are written to the run folder.
 
 ## 9. Checking the install
 

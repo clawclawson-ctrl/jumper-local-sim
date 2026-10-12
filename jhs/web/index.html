@@ -69,6 +69,12 @@
 
 <section id="other" style="display:none;max-width:640px">
  <h2>2 · Run this app</h2><div id="othertext" class="muted"></div>
+ <div id="tidyopts" style="display:none">
+  <div class="row">Run length <select id="ttmax"><option value="420">420 s (as in our tests)</option><option value="180">180 s</option><option value="120">120 s</option></select>
+   Speed <select id="tspeed"><option value="1">at most 1x real time</option><option value="0">as fast as possible</option></select>
+   seed <input id="tseed" type="number" value="1" style="width:60px">
+   <label><input type="checkbox" id="tlive" checked> live picture</label></div>
+ </div>
  <div class="row" id="mapsel_row">Room <select id="mapsel"><option value="hide_seek">Hide &amp; seek room (v7)</option><option value="tidy">Tidy-up room</option><option value="">The app's own default world</option></select></div>
  <div class="row"><button onclick="startOther()">Start</button><span id="othermsg"></span></div>
 </section>
@@ -120,9 +126,10 @@ function appChanged(){const a=app(); if(!a){$('appinfo').textContent='no apps ye
  if(a.kind==='flybrain'&&$('tmax').dataset.kind!=='fly'){$('tmax').value='120';} if(a.kind!=='flybrain'&&$('tmax').dataset.kind==='fly'){$('tmax').value='600';} $('tmax').dataset.kind=a.kind==='flybrain'?'fly':'hs';
  const soc=a.ok&&a.kind==='soccer'; $('soccersetup').style.display=soc?'':'none'; if(soc&&!SF) sInit();
  const other=a.ok&&!room&&!soc; $('other').style.display=other?'':'none';
+ $('tidyopts').style.display=a.kind==='tidy_vision'?'':'none';
  $('mapsel_row').style.display=a.kind==='official'?'':'none';
  $('othertext').innerHTML=a.kind==='official'?'A plain app has no vision brain: you drive the crab yourself in MuJoCo\'s 3D window (keyboard: the app\'s own keys, printed in the Terminal; a gamepad works too). Close the window to stop.':
-   a.kind==='tidy_vision'?'EXPERIMENTAL: the tidy-up vision brain runs on the shipped tidy-up room with its own toy layout. No hand placement, no live picture and no MP4 for this one; progress shows in the log.':
+   a.kind==='tidy_vision'?'The tidy-up vision brain sorts the ball and the mini football into the basket, and the duck into the crate. The seed places the toys on the tidy-up room. Watch it live, then save an MP4.':
    'This hide & seek app is older than the local-sim hooks: random hidden toys, no live picture. You can still save the MP4 afterwards.';}
 async function uploadApp(f){if(!f)return; $('appinfo').textContent='loading '+f.name+' …'; const r=await fetch('/api/upload',{method:'POST',headers:{'X-Filename':f.name},body:f}); const i=await r.json();
  if(!i.ok){$('appinfo').innerHTML='<span class="err">'+(i.error||'failed')+'</span>';return;} await loadApps(i.path);}
@@ -215,15 +222,20 @@ async function sStart(){const a=app(); $('smsg').textContent='starting… (two c
 async function startRun(){const a=app(); $('startmsg').textContent='starting…';
  const r=await api('/api/start',{app:a.path,toys,start:crab,moves,pushable:$('pushable').checked,seed:+$('seed').value,tmax:+$('tmax').value,speed:+$('speed').value,physics_hz:$('phys').value?+$('phys').value:null,live:$('livebox').checked});
  if(!r.ok){$('startmsg').innerHTML='<span class="err">'+(r.error||'failed')+'</span>';return;} $('startmsg').textContent=''; curRun=r.run; showLive();}
-async function startOther(){const a=app(); const r=await api('/api/start',{app:a.path,map:$('mapsel').value,seed:+$('seed').value});
- if(!r.ok){$('othermsg').innerHTML='<span class="err">'+(r.error||'failed')+'</span>';return;} $('othermsg').textContent=r.kind==='official'?'MuJoCo window opening (takes ~30 s)…':''; curRun=r.run; showLive();}
+async function startOther(){const a=app(); const body={app:a.path,map:$('mapsel').value,seed:+$('seed').value};
+ if(a.kind==='tidy_vision'){body.seed=+$('tseed').value; body.tmax=+$('ttmax').value; body.speed=+$('tspeed').value; body.live=$('tlive').checked;}
+ $('othermsg').textContent='starting…';
+ const r=await api('/api/start',body);
+ if(!r.ok){$('othermsg').innerHTML='<span class="err">'+(r.error||'failed')+'</span>';return;}
+ $('othermsg').textContent=r.kind==='official'?'MuJoCo window opening (takes ~30 s)…':(r.kind==='tidy_vision'?'world building (~30 s), then the live picture…':''); curRun=r.run; showLive();}
 function showLive(){$('livesec').style.display=''; $('donebox').style.display='none'; $('runname').textContent=curRun; $('stopbtn').disabled=false; clearInterval(poll); poll=setInterval(tick,700); tick();}
 async function tick(){const s=await api('/api/status?run='+encodeURIComponent(curRun)); if(s.error&&!s.run){return;}
  const im=new Image(); im.onload=()=>{$('live').src=im.src;}; im.src='/api/live.jpg?run='+encodeURIComponent(curRun)+'&t='+Date.now();
  let t=`sim t = ${s.t!=null?(+s.t).toFixed(1):'…'} s`; if(s.rate) t+=` · ${(+s.rate).toFixed(2)}x real time`; if(s.state) t+=` · ${s.state}`;
  if(s.kind==='soccer'&&s.ref) t+=` · referee (SIM TRUTH): ${s.ref}`;
  if(s.kind==='fly'||s.kind==='flybrain'){if(s.sub) t+=` (${s.sub})`; if(s.counts) t+=' · '+Object.entries(s.counts).filter(([k,v])=>v).map(([k,v])=>k+' '+v).join(', ');}
- if(s.ntoys) t+=` · crab's own count ${s.gathered}/${s.ntoys} · scorer (SIM TRUTH, not used by the crab) ${s.n_truth}/${s.ntoys}`;
+ if(s.kind==='tidy_vision'&&s.ntoys) t+=` · crab thinks sorted ${s.gathered}/${s.ntoys} · scorer (SIM TRUTH, not used by the crab) ${s.n_truth}/${s.ntoys} in the right bin`;
+ else if(s.ntoys) t+=` · crab's own count ${s.gathered}/${s.ntoys} · scorer (SIM TRUTH, not used by the crab) ${s.n_truth}/${s.ntoys}`;
  $('stat').textContent=t; $('log').textContent=s.log_tail||'';
  if(!s.running){clearInterval(poll); $('stopbtn').disabled=true;
   const R=s.result; let msg=(R&&R.kind==='soccer')?`${R.final||('RED '+R.score.RED+' - '+R.score.BLUE+' BLUE')} (referee, SIM TRUTH) · goals: `+((R.goals||[]).map(g=>g.team+(g.own_goal?' (own goal)':'')+' '+g.t+'s').join(', ')||'none')+` · falls RED ${(R.falls||{}).RED} BLUE ${(R.falls||{}).BLUE} · referee drop-balls ${R.drop_balls} <span class="warn">(SIM-ONLY VISION CONCEPT)</span>`:(R&&R.kind==='flybrain')?`finished: ${R.t_end} s sim, falls ${R.falls}, walked ${R.path_m} m · behaviours: `+Object.entries(R.counts||{}).map(([k,v])=>k+' '+v).join(', ')+(R.props_moved_m?' · props moved: '+(Object.entries(R.props_moved_m).filter(([k,v])=>v>=0.01).map(([k,v])=>k+' '+v.toFixed(2)+' m').join(', ')||'none'):'')+' <span class="warn">(SIM-ONLY, fly-inspired rules)</span>':(s.result&&s.result.n_correct!=null)?`finished: sorted into the right bin ${s.result.n_correct}/${s.result.n_toys} (SIM TRUTH), falls ${s.result.falls}`:s.result?`finished: found ${s.result.n_found}/${s.result.n_toys}, on the rug ${s.result.n_gathered}/${s.result.n_toys} (SIM TRUTH)`+(s.result.t_all_gathered!=null?`, all on the rug at ${s.result.t_all_gathered} s`:'')+`, falls ${s.result.falls}`+(s.result.props_moved_m?' · props moved by the crab: '+Object.entries(s.result.props_moved_m).filter(([k,v])=>v>=0.01).map(([k,v])=>k+' '+v.toFixed(2)+' m').join(', '):''):(s.exit_code? 'stopped with an error — see the log':'stopped');

@@ -189,7 +189,8 @@ class H(BaseHTTPRequestHandler):
                                                    speed=float(b.get("speed", 1.0)), live=bool(b.get("live", True)), physics_hz=b.get("physics_hz"),
                                                    pushable=bool(b.get("pushable", True)), goals_to_win=int(b.get("goals_to_win", 3)), aggression=b.get("aggression"))
                 elif info.get("kind") == "tidy_vision":
-                    proc, rd = runner.start_tidy(info["path"], seed=int(b.get("seed", 1)), tmax=float(b.get("tmax", 420)))
+                    proc, rd = runner.start_tidy(info["path"], seed=int(b.get("seed", 1)), tmax=float(b.get("tmax", 420)),
+                                                 speed=float(b.get("speed", 1.0)), live=bool(b.get("live", True)))
                 else:
                     scene = {"hide_seek": runner.MAPS["hide_seek"], "tidy": runner.MAPS["tidy_vision"]}.get(b.get("map"), None)
                     proc, rd = runner.start_official(info["path"], scene=scene, viewer=True)
