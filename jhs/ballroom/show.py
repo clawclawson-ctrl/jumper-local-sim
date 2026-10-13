@@ -11,9 +11,9 @@ import numpy as np
 
 from jhs import PKG, ROOT
 from jhs.audio import ffmpeg_exe
-from jhs.ballroom.choreo import at, figure_at, lerp_angle, plan
+from jhs.ballroom.choreo import at, clip_root, figure_at, gestures, lerp_angle, plan
 from jhs.ballroom.clips import Library
-from jhs.ballroom.gait import Steps
+from jhs.ballroom.gait import Steps, held_body
 from jhs.ballroom.music import analyze
 from jhs.ballroom.scene import build
 from jhs.runner import DEFAULT_MOVIES
@@ -22,8 +22,7 @@ from jhs.runner import DEFAULT_MOVIES
 FPS = 20
 W, H = 1280, 720
 BLEND = 0.45
-# These figures keep the front claws for the gesture. The four legs underneath still step.
-GESTURE = {"bow", "hello", "waist", "wings", "brazilian"}
+# gestures() says which crabs keep the front claws. The legs underneath still step.
 
 
 def _mix(a, b, w):
@@ -39,11 +38,17 @@ def _mix(a, b, w):
 
 
 def _place(moon_steps, candle_steps, data, fig, t, beat, sa, sb):
-    """Body from the clip, feet from the tripod. Candle is half a cycle out of step."""
+    """Body from the clip, feet from the tripod. Candle is half a cycle out of step.
+
+    A bow may lean. A traveling figure keeps the clip's claws and drops its sway,
+    because that sway is what skates a foot that was just planted.
+    """
+    if not clip_root(fig.kind):
+        sa, sb = held_body(sa), held_body(sb)
     mxy, myaw, cxy, cyaw = at(fig, min(t, fig.t1), beat)
-    gesture = fig.kind in GESTURE
-    moon_steps.apply(data, mxy, myaw, sa, t, beat, gesture, 0.0)
-    candle_steps.apply(data, cxy, cyaw, sb, t, beat, gesture, 0.5)
+    moon_g, candle_g = gestures(fig.kind)
+    moon_steps.apply(data, mxy, myaw, sa, t, beat, moon_g, 0.0)
+    candle_steps.apply(data, cxy, cyaw, sb, t, beat, candle_g, 0.5)
     return mxy, myaw, cxy, cyaw
 
 

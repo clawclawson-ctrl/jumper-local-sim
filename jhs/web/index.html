@@ -69,7 +69,8 @@
 
 <section id="ballroomsetup" style="display:none">
  <h2>2 · The moonlit ballroom</h2>
- <div class="muted">Two crabs, one dance. <b>Moon</b> is silver, <b>Candle</b> is gold. They bow, box-step, promenade and turn, on the beat of whatever track you give them. They stay a polite distance apart — a crab does not take its partner's claw. The feet step the way this robot walks, three at a time; a bow or a wave keeps the front claws for the gesture. The camera follows the pair and swings around them when the phrase turns. Waltz of the Moonlit Ballroom is the first tune.</div>
+ <div class="muted">Two crabs, one dance. <b>Moon</b> is silver, <b>Candle</b> is gold. They bow, box-step, promenade, pirouette, and take a few figures from a square dance — a do-si-do, a star, a sashay, a swing, a balance, and a courtesy turn — on the beat of whatever track you give them. They stay a polite distance apart and never take claws. The feet step the way this robot walks, three at a time, through the turns as well as the walks. A bow, a wave, or a spin keeps the front claws for the gesture. The camera follows the pair and swings around them when the phrase turns. Waltz of the Moonlit Ballroom is the first tune. After it come Square Waltz, Square Waltz (Banjo), Waltz of the Moonlit Ballroom (Piano), Flamenco Waltz, Flamenco Waltz (Accordion), Cuban Waltz (Brass), and Cuban Waltz (Drums).</div>
+ <div class="row">Tune <select id="btune" onchange="bTune()"></select></div>
  <div class="row">Track <input id="bpath" style="width:420px" placeholder="an mp3, m4a, or wav">
   <button class="sec" onclick="document.getElementById('bupl').click()">Choose…</button>
   <input type="file" id="bupl" accept=".mp3,.wav,.m4a,.aac,.flac,.ogg,audio/*" style="display:none" onchange="bUpload(this.files[0])">
@@ -143,7 +144,7 @@ function appChanged(){const a=app(); if(!a){$('appinfo').textContent='no apps ye
  if(a.kind==='flybrain'&&$('tmax').dataset.kind!=='fly'){$('tmax').value='120';} if(a.kind!=='flybrain'&&$('tmax').dataset.kind==='fly'){$('tmax').value='600';} $('tmax').dataset.kind=a.kind==='flybrain'?'fly':'hs';
  const soc=a.ok&&a.kind==='soccer'; $('soccersetup').style.display=soc?'':'none'; if(soc&&!SF) sInit();
  const ball=a.ok&&a.kind==='ballroom'; $('ballroomsetup').style.display=ball?'':'none';
- if(ball&&!$('bpath').value&&INFO.ballroom_tune) $('bpath').value=INFO.ballroom_tune;
+ if(ball){fillTunes(); if(!$('bpath').value&&INFO.ballroom_tune) $('bpath').value=INFO.ballroom_tune;}
  const other=a.ok&&!room&&!soc&&!ball; $('other').style.display=other?'':'none';
  $('tidyopts').style.display=a.kind==='tidy_vision'?'':'none';
  $('mapsel_row').style.display=a.kind==='official'?'':'none';
@@ -238,9 +239,16 @@ async function sStart(){const a=app(); $('smsg').textContent='starting… (two c
  const r=await api('/api/start',{app:a.path,setup:sb,pushable:$('spush').checked,seed:+$('smseed').value,tmax:+$('stmax').value,speed:+$('sspeed').value,physics_hz:$('sphys').value?+$('sphys').value:null,live:$('slive').checked,goals_to_win:Math.max(1,Math.min(10,+$('sgoals').value||3)),aggression:{A:Math.max(0,Math.min(1,+$('saggA').value)),B:Math.max(0,Math.min(1,+$('saggB').value))}});
  if(!r.ok){$('smsg').innerHTML='<span class="err">'+(r.error||'failed')+'</span>';return;} $('smsg').textContent=''; curRun=r.run; showLive();}
 // ---------- run ----------
+function fillTunes(){const s=$('btune'); if(!s) return; const tunes=INFO.ballroom_tunes||[];
+ if(s.dataset.ready!=='1'){s.innerHTML=''; for(const t of tunes){const o=document.createElement('option'); o.value=t.path; o.textContent=t.name; s.appendChild(o);}
+  const o=document.createElement('option'); o.value=''; o.textContent='another track…'; s.appendChild(o); s.dataset.ready='1';}
+ if(!$('bpath').value&&tunes.length) $('bpath').value=tunes[0].path;
+ const path=$('bpath').value; s.value=[...s.options].some(o=>o.value===path)?path:'';}
+function bTune(){const v=$('btune').value; if(v) $('bpath').value=v;}
+function bMatchTune(){const s=$('btune'); if(!s||s.dataset.ready!=='1') return; const path=$('bpath').value; s.value=[...s.options].some(o=>o.value===path)?path:'';}
 async function bUpload(f){if(!f)return; $('bpulse').textContent='copying '+f.name+' …'; const r=await fetch('/api/upload_audio',{method:'POST',headers:{'X-Filename':f.name},body:f}); const i=await r.json();
- if(!i.ok){$('bpulse').innerHTML='<span class="err">'+(i.error||'failed')+'</span>';return;} $('bpath').value=i.path; $('bpulse').textContent=i.name;}
-async function bPick(){const i=await api('/api/pick_audio',{}); if(i.ok){$('bpath').value=i.path; $('bpulse').textContent=i.name;} else $('bpulse').textContent=i.error||'';}
+ if(!i.ok){$('bpulse').innerHTML='<span class="err">'+(i.error||'failed')+'</span>';return;} $('bpath').value=i.path; bMatchTune(); $('bpulse').textContent=i.name;}
+async function bPick(){const i=await api('/api/pick_audio',{}); if(i.ok){$('bpath').value=i.path; bMatchTune(); $('bpulse').textContent=i.name;} else $('bpulse').textContent=i.error||'';}
 async function bListen(){const p=$('bpath').value.trim(); if(!p){$('bpulse').textContent='choose a track first';return;} $('bpulse').textContent='listening…';
  const r=await api('/api/ballroom_analyze',{path:p}); $('bpulse').innerHTML=r.ok?`<span class="ok">${r.pulse}</span>`:`<span class="err">${r.error||'could not read it'}</span>`;}
 async function bStart(){const p=$('bpath').value.trim(); if(!p){$('bmsg').innerHTML='<span class="err">choose a track first</span>';return;}

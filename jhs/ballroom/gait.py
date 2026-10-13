@@ -10,8 +10,9 @@ stays where it was put down. A swing foot lifts and lands under the body.
 A bow, a wave or a wing still owns the two front claws. The four legs underneath
 keep stepping. The solver is not free to flip a knee: each walking leg stays near
 the pose the clip (or the standing pose, for a front foot) already solved, which
-is the bend this robot actually uses. A claw that would pass through the floor
-is lifted with the body, and the feet are put back down.
+is the bend this robot actually uses. A turn plants the foot ahead of the hip,
+the same way a step plants it ahead of the body. A claw that would pass through
+the floor is lifted with the body, and the feet are put back down.
 """
 from __future__ import annotations
 import math
@@ -108,10 +109,16 @@ class Steps:
         self.swing_from = {}
         self.swing_to = {}
         self.vel = np.zeros(2)
+        self.yaw_rate = 0.0
         self.phase = 0.0
         self.last_xy = None
+        self.last_yaw = None
         self.last_t = None
+        self.spin_r = 0.20
         self.anchored = True
+        self.early = {leg: False for leg in ALL}
+        self.air = {leg: 0.0 for leg in ALL}
+        self._dt = 0.0
         self._measure(mujoco, data)
         self.floor_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "floor")
         self.claw_ids = []
@@ -134,10 +141,15 @@ class Steps:
         self.q[:] = self.crab.home
         self.swing = {leg: False for leg in ALL}
         self.vel[:] = 0
+        self.yaw_rate = 0.0
         self.phase = 0.0
         self.last_xy = None
+        self.last_yaw = None
         self.last_t = None
         self.anchored = False
+        self.early = {leg: False for leg in ALL}
+        self.air = {leg: 0.0 for leg in ALL}
+        self._dt = 0.0
 
     def _prefix(self, mujoco, joint0: str) -> str:
         for j in range(self.model.njnt):
@@ -161,6 +173,8 @@ class Steps:
             zs.append(float(p[2]))
         self.ground_z = float(np.mean(zs))
         self.plant = self._nominal(bxy, yaw)
+        radii = [math.hypot(*self.offset[leg]) for leg in SUPPORT]
+        self.spin_r = float(np.mean(radii)) if radii else 0.20
 
     def _nominal(self, xy, yaw) -> dict:
         c, s = math.cos(yaw), math.sin(yaw)
@@ -266,36 +280,34 @@ class Steps:
         return worst < -0.006
 
     def _unwind(self, data, walked, nominal):
-        """A foot driven through the floor is a bad reach. Put that leg back on
-        the pose that already looks right, and stop chasing the far foothold.
+        """A foot driven through the floor is a bad reach. Pick it up.
 
-        Re-solving the same target just twists the claw under again, so this
-        restores the pose instead of taking another reach.
+        Restoring the standing bend would throw the foot across the floor,
+        and reaching again for the same plant digs the claw back in.
         """
         import mujoco
         if self.floor_id < 0:
             return
         mujoco.mj_forward(self.model, data)
-        buried = [leg for leg in walked if self._buried(data, leg)]
+        buried = [leg for leg in walked if self._buried(data, leg) and not self.swing[leg]]
         if not buried:
             return
+        targets = {}
         for leg in buried:
             spec = self.legs[leg]
-            for k, adr in enumerate(spec["qadrs"]):
-                q_ref = float(spec["ref"][k])
-                data.qpos[adr] = self._clamp_joint(leg, k, q_ref, q_ref)
-            self.swing[leg] = False
+            here = np.array(data.site_xpos[spec["site"]][:2], dtype=np.float64)
+            delta = nominal[leg] - here
+            dist = float(np.hypot(delta[0], delta[1]))
+            aim = here + delta * (0.04 / dist) if dist > 0.04 else nominal[leg]
+            self._begin(leg, aim, early=True, origin=here)
+            self.air[leg] = 0.45
+            u = _smooth(0.45)
+            base = (1.0 - u) * here + u * aim
+            targets[leg] = np.array([base[0], base[1], self.ground_z + LIFT * math.sin(math.pi * 0.45)])
+            self._targets[leg] = targets[leg]
+        self._reach(data, buried, targets)
         self._copy_walked(data, buried)
         self._write_q(data)
-        mujoco.mj_kinematics(self.model, data)
-        for leg in buried:
-            site = data.site_xpos[self.legs[leg]["site"]]
-            # Keep the next step from dragging the leg back into the floor.
-            here = np.array(site[:2], dtype=np.float64)
-            gap = here - nominal[leg]
-            far = float(np.hypot(gap[0], gap[1]))
-            self.plant[leg] = nominal[leg] + gap * (0.08 / far) if far > 0.08 else here
-            self.swing_to[leg] = self.plant[leg]
 
     def _lift_claws(self, data, walked):
         """A gesture may reach the floor. Raise the body by the overlap and put the feet back."""
@@ -316,13 +328,109 @@ class Steps:
                 pen = dist if pen is None else min(pen, dist)
         # A claw resting on the floor still reads as sunk, because the drawn
         # shell sticks a little past the contact. Leave a few millimetres.
+        # One correction is not enough when the claw meets the floor at an angle.
         if pen is None or pen >= 0.004:
             return
-        lift = min(0.025, 0.004 - pen)
-        data.qpos[self.crab.free + 2] += lift
-        self._reach(data, walked, self._targets)
-        self._copy_walked(data, walked)
-        self._write_q(data)
+        lifted = 0.0
+        for _ in range(3):
+            if pen is None or pen >= 0.004 or lifted >= 0.045:
+                break
+            step = min(0.016, 0.045 - lifted, 0.004 - pen)
+            data.qpos[self.crab.free + 2] += step
+            lifted += step
+            self._reach(data, walked, self._targets)
+            self._copy_walked(data, walked)
+            self._write_q(data)
+            mujoco.mj_forward(self.model, data)
+            pen = None
+            for i in range(data.ncon):
+                c = data.contact[i]
+                pair = (int(c.geom1), int(c.geom2))
+                if self.floor_id not in pair:
+                    continue
+                other = pair[1] if pair[0] == self.floor_id else pair[0]
+                if other in want:
+                    dist = float(c.dist)
+                    pen = dist if pen is None else min(pen, dist)
+
+    def _aim(self, nominal, leg, world, yaw_lead, lead, comfort):
+        """Where this foot should land for the motion happening now."""
+        ahead = nominal[leg] - world
+        ca, sa = math.cos(yaw_lead), math.sin(yaw_lead)
+        aim = world + np.array([
+            ca * ahead[0] - sa * ahead[1],
+            sa * ahead[0] + ca * ahead[1],
+        ]) + lead
+        reach = aim - comfort
+        dist = float(np.hypot(reach[0], reach[1]))
+        if dist > MAX_STRIDE:
+            aim = comfort + reach * (MAX_STRIDE / dist)
+        return aim
+
+    def _miss(self, have, aim, speed) -> float:
+        """How far an old foothold sits off the step we want now.
+
+        A straight walk leaves the foothold ahead of the hip, along the
+        direction of travel. That is the step. Beside that line, or behind
+        it, the turn has changed and the old foothold would skate.
+        """
+        delta = np.asarray(aim, dtype=np.float64) - np.asarray(have, dtype=np.float64)
+        dist = float(np.hypot(delta[0], delta[1]))
+        if dist < 1e-6:
+            return 0.0
+        if speed < 0.03:
+            return dist
+        forward = self.vel / speed
+        along = float(delta[0] * forward[0] + delta[1] * forward[1])
+        # Ahead of the old foothold is the walk itself. Behind it, the step reversed.
+        if along < -0.02:
+            return dist
+        return math.sqrt(max(0.0, dist * dist - along * along))
+
+    def _begin(self, leg, aim, early: bool, origin=None):
+        self.swing[leg] = True
+        self.early[leg] = early
+        self.air[leg] = 0.0
+        src = self.plant[leg] if origin is None else origin
+        self.swing_from[leg] = np.array(src, dtype=np.float64)
+        self.swing_to[leg] = np.array(aim, dtype=np.float64)
+
+    def _unstick(self, data, walked, nominal, saved):
+        """A later solve slid a planted foot. Put that leg back and step."""
+        import mujoco
+        fix = {}
+        for leg, qsave in saved.items():
+            if leg not in walked or self.swing[leg]:
+                continue
+            spec = self.legs[leg]
+            here = np.array(data.site_xpos[spec["site"]][:2], dtype=np.float64)
+            if float(np.hypot(*(here - self.plant[leg]))) <= 0.008:
+                continue
+            for q, adr in zip(qsave, spec["qadrs"]):
+                data.qpos[adr] = float(q)
+            mujoco.mj_kinematics(self.model, data)
+            before = np.array(data.site_xpos[spec["site"]][:2], dtype=np.float64)
+            delta = nominal[leg] - before
+            dist = float(np.hypot(delta[0], delta[1]))
+            aim = before + delta * (0.04 / dist) if dist > 0.04 else np.array(nominal[leg])
+            self._begin(leg, aim, early=True, origin=before)
+            self.air[leg] = 0.35
+            u = _smooth(0.35)
+            base = (1.0 - u) * before + u * aim
+            fix[leg] = np.array([
+                base[0], base[1], self.ground_z + LIFT * math.sin(math.pi * 0.35),
+            ])
+            self._targets[leg] = fix[leg]
+        if fix:
+            self._reach(data, list(fix), fix)
+            self._copy_walked(data, list(fix))
+            self._write_q(data)
+
+    def _land(self, leg, site):
+        """Put the foot down where it actually is. Chasing a missed target is the skate."""
+        self.swing[leg] = False
+        self.early[leg] = False
+        self.plant[leg] = np.array(site, dtype=np.float64)
 
     def apply(self, data, xy, yaw, sample, t, beat, gesture: bool, phase_shift: float = 0.0):
         """Stand the body on `sample` (clip joints, sway, height, rpy) and step the feet."""
@@ -339,17 +447,24 @@ class Steps:
             float(xy[0]) + c * float(dxy[0]) - s * float(dxy[1]),
             float(xy[1]) + s * float(dxy[0]) + c * float(dxy[1]),
         ])
+        self._dt = 0.0
         if self.last_xy is not None and self.last_t is not None:
             dt = float(t) - self.last_t
             if 1e-4 < dt < 0.5:
+                self._dt = dt
                 inst = (world - self.last_xy) / dt
                 self.vel = 0.55 * inst + 0.45 * self.vel
+                if self.last_yaw is not None:
+                    dy = (yaw - self.last_yaw + math.pi) % (2 * math.pi) - math.pi
+                    self.yaw_rate = 0.55 * (dy / dt) + 0.45 * self.yaw_rate
                 speed = float(np.hypot(self.vel[0], self.vel[1]))
-                # Keep the stride near STRIDE. A waltz beat is too slow for a long step:
-                # the rear foot would be asked to stay down after the leg had straightened.
-                freq = min(GAIT_HZ, max(1.0, speed / STRIDE))
+                # The outside foot on a turn travels the walk and the sweep together.
+                # Counting both keeps that foot inside one stride.
+                spin = abs(self.yaw_rate) * self.spin_r
+                freq = min(GAIT_HZ, max(1.0, (speed + spin) / STRIDE))
                 self.phase = (self.phase + freq * dt) % 1.0
         self.last_xy = world.copy()
+        self.last_yaw = float(yaw)
         self.last_t = float(t)
         phase = (self.phase + float(phase_shift)) % 1.0
 
@@ -358,14 +473,10 @@ class Steps:
         else:
             group, frac = TRIPOD_B, (phase - 0.5) / 0.5
         walked = SUPPORT if gesture else ALL
-        # The clip already solved a bend that matches this lean. Start there
-        # (the standing pose, for a front foot that is walking) and only leave
-        # it to put the foot where the step asks.
+        # A walking leg uses the standing bend. A dance clip's own leg angles
+        # are a pose, not a step, and chasing them drags a planted foot.
         for leg, spec in self.legs.items():
-            use_clip = leg in SUPPORT
-            spec["ref"] = np.array([
-                float(joints[c] if use_clip else self.crab.home[c]) for c in spec["cols"]
-            ])
+            spec["ref"] = np.array([float(self.crab.home[c]) for c in spec["cols"]])
             if leg in walked:
                 # Continue from the last step, pulled back inside the legal bend.
                 # Starting over from the reference each frame makes the foot chase
@@ -387,54 +498,107 @@ class Steps:
             }
             self.anchored = True
         speed = float(np.hypot(self.vel[0], self.vel[1]))
-        freq = min(GAIT_HZ, max(1.0, speed / STRIDE))
+        spin = abs(self.yaw_rate) * self.spin_r
+        freq = min(GAIT_HZ, max(1.0, (speed + spin) / STRIDE))
         # Land where the foot will be under the body halfway through the next stance.
         lead = self.vel * (0.75 / freq)
         if float(np.hypot(lead[0], lead[1])) > STRIDE:
             lead *= STRIDE / float(np.hypot(lead[0], lead[1]))
+        # Same idea for a turn: plant the foot ahead of the hip, around the body.
+        yaw_lead = float(np.clip(self.yaw_rate * (0.75 / freq), -0.55, 0.55))
         lat = np.array([-math.sin(yaw), math.cos(yaw)])
 
+        waiting = []
         for leg in ALL:
             spec = self.legs[leg]
             if leg not in walked:
                 self.swing[leg] = False
+                self.early[leg] = False
                 continue
             comfort = np.array(data.site_xpos[spec["site"]][:2], dtype=np.float64)
+            aim = self._aim(nominal, leg, world, yaw_lead, lead, comfort)
+            if self.early[leg]:
+                # Finish the step that was started. Chasing a new landing mid-air
+                # puts the foot down somewhere the leg never reached.
+                step = freq * self._dt / 0.5 if self._dt else 0.0
+                self.air[leg] = min(1.0, self.air[leg] + step)
+                if self.air[leg] >= 1.0:
+                    self._land(leg, comfort)
+                continue
             stepping = leg in group
             if stepping and not self.swing[leg]:
-                # Land near the natural foothold. A target further out than the
-                # leg can reach is what folds the knee backwards.
-                aim = nominal[leg] + lead
-                reach = aim - comfort
-                dist = float(np.hypot(reach[0], reach[1]))
-                if dist > MAX_STRIDE:
-                    aim = comfort + reach * (MAX_STRIDE / dist)
-                self.swing[leg] = True
-                self.swing_from[leg] = np.array(self.plant[leg], dtype=np.float64)
-                self.swing_to[leg] = aim
+                self._begin(leg, aim, early=False)
+            elif stepping and self.swing[leg]:
+                # The landing was chosen when the foot left the floor. A turn
+                # that ends mid-step would put it down for a motion that is over.
+                if self._miss(self.swing_to[leg], aim, speed) > 0.028:
+                    self.swing_to[leg] = np.array(aim, dtype=np.float64)
             elif not stepping and self.swing[leg]:
-                self.swing[leg] = False
-                self.plant[leg] = np.array(self.swing_to[leg])
+                self._land(leg, comfort)
+            else:
+                # A stance foot that has already slid, or one left further out
+                # than a normal lead, is picked up. The next aim simply being
+                # ahead of the plant is the step itself, not a reason to lift.
+                slipped = float(np.hypot(*(comfort - self.plant[leg])))
+                far = float(np.hypot(*(self.plant[leg] - nominal[leg])))
+                if slipped > 0.008 or far > 0.090:
+                    waiting.append((max(slipped, far), leg, aim, comfort))
+
+        down = [leg for leg in walked if not self.swing[leg]]
+        waiting.sort(key=lambda item: -item[0])
+        for slipped, leg, aim, origin in waiting:
+            # Leave the last foot down only while it is still where it was planted.
+            if len(down) <= 1 and slipped < 0.011:
+                break
+            self._begin(leg, aim, early=True, origin=origin)
+            down.remove(leg)
 
         targets = {}
         for leg in walked:
             spec = self.legs[leg]
             if self.swing[leg]:
-                u = _smooth(frac)
+                prog = self.air[leg] if self.early[leg] else frac
+                u = _smooth(prog)
                 base = (1 - u) * self.swing_from[leg] + u * self.swing_to[leg]
                 span = float(np.hypot(*(self.swing_to[leg] - self.swing_from[leg])))
                 lift = LIFT_STILL if span < 0.02 else LIFT
-                arc = ARC * spec["side"] * math.sin(math.pi * frac) if span < 0.02 else 0.0
+                arc = ARC * spec["side"] * math.sin(math.pi * prog) if span < 0.02 else 0.0
                 targets[leg] = np.array([
                     base[0] + lat[0] * arc,
                     base[1] + lat[1] * arc,
-                    self.ground_z + lift * math.sin(math.pi * min(1.0, frac)),
+                    self.ground_z + lift * math.sin(math.pi * min(1.0, prog)),
                 ])
             else:
                 p = self.plant[leg]
                 targets[leg] = np.array([p[0], p[1], self.ground_z])
         self._targets = targets
+        stance_xy = {
+            leg: np.array(data.site_xpos[self.legs[leg]["site"]][:2], dtype=np.float64)
+            for leg in walked if not self.swing[leg]
+        }
         self._reach(data, walked, targets)
+        # A stance solve that slides the foot is abandoned. The foot steps instead.
+        fix = {}
+        for leg, before in stance_xy.items():
+            if self.swing[leg]:
+                continue
+            here = np.array(data.site_xpos[self.legs[leg]["site"]][:2], dtype=np.float64)
+            if float(np.hypot(*(here - self.plant[leg]))) <= 0.008:
+                continue
+            spec = self.legs[leg]
+            for col, adr in zip(spec["cols"], spec["qadrs"]):
+                data.qpos[adr] = float(self.q[col])
+            delta = nominal[leg] - before
+            dist = float(np.hypot(delta[0], delta[1]))
+            aim = before + delta * (0.04 / dist) if dist > 0.04 else np.array(nominal[leg])
+            self._begin(leg, aim, early=True, origin=before)
+            self.air[leg] = 0.35
+            u = _smooth(0.35)
+            base = (1.0 - u) * before + u * aim
+            fix[leg] = np.array([base[0], base[1], self.ground_z + LIFT * math.sin(math.pi * 0.35)])
+            self._targets[leg] = fix[leg]
+        if fix:
+            self._reach(data, list(fix), fix)
         self._copy_walked(data, walked)
         if gesture:
             for col in self.front_cols:
@@ -445,13 +609,29 @@ class Steps:
         self._write_q(data)
         self._unwind(data, walked, nominal)
         if gesture:
+            pre_lift = {
+                leg: [float(self.q[col]) for col in self.legs[leg]["cols"]]
+                for leg in walked if not self.swing[leg]
+            }
             self._lift_claws(data, walked)
+            self._unstick(data, walked, nominal, pre_lift)
 
     def foot_xy(self, data, leg: str) -> np.ndarray:
         return np.array(data.site_xpos[self.legs[leg]["site"]][:2], dtype=np.float64)
 
     def foot_z(self, data, leg: str) -> float:
         return float(data.site_xpos[self.legs[leg]["site"]][2])
+
+
+def held_body(sample):
+    """Clip joints only. The figure already placed the body.
+
+    A step or a spin owns the place, the height, and the facing. The recording's
+    sway and lean, added on top, drag a foot that was just planted. A claw that
+    still reaches the floor is lifted with the body afterwards.
+    """
+    joints, _dxy, _z, _rpy = sample
+    return joints, np.zeros(2, dtype=np.float64), _STAND_Z, np.zeros(3)
 
 
 def check() -> str:

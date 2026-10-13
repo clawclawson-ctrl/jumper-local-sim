@@ -78,10 +78,11 @@ class H(BaseHTTPRequestHandler):
             if u.path in ("/", "/index.html"):
                 return self._send(200, (PKG / "web" / "index.html").read_bytes(), "text/html; charset=utf-8")
             if u.path == "/api/info":
-                from jhs.ballroom import DEFAULT_TUNE
+                from jhs.ballroom import DEFAULT_TUNE, tunes as ballroom_tunes
                 tune = str(DEFAULT_TUNE) if DEFAULT_TUNE.is_file() else None
                 return self._send(200, dict(version=VERSION, platform=sys.platform, runs=str(runner.RUNS), movies=str(runner.DEFAULT_MOVIES),
-                                            preselect=STATE.get("preselect"), running=running_run(), ballroom_tune=tune))
+                                            preselect=STATE.get("preselect"), running=running_run(),
+                                            ballroom_tune=tune, ballroom_tunes=ballroom_tunes()))
             if u.path == "/api/apps": return self._send(200, list_apps())
             if u.path == "/api/room": return self._send(200, ROOM.to_json())
             if u.path == "/api/soccer_field":
