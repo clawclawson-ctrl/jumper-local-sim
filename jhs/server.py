@@ -21,12 +21,14 @@ ROOM = Room()
 
 
 def list_apps():
+    from jhs.ballroom import entry as ballroom_entry
     paths = sorted(APPS.glob("*.app")) + [Path(p) for p in STATE["extra_apps"]]
     seen, out = set(), []
     for p in paths:
         rp = str(Path(p).resolve())
         if rp in seen: continue
         seen.add(rp); out.append(inspect(rp))
+    out.insert(0, ballroom_entry())
     return out
 
 
@@ -76,8 +78,10 @@ class H(BaseHTTPRequestHandler):
             if u.path in ("/", "/index.html"):
                 return self._send(200, (PKG / "web" / "index.html").read_bytes(), "text/html; charset=utf-8")
             if u.path == "/api/info":
+                from jhs.ballroom import DEFAULT_TUNE
+                tune = str(DEFAULT_TUNE) if DEFAULT_TUNE.is_file() else None
                 return self._send(200, dict(version=VERSION, platform=sys.platform, runs=str(runner.RUNS), movies=str(runner.DEFAULT_MOVIES),
-                                            preselect=STATE.get("preselect"), running=running_run()))
+                                            preselect=STATE.get("preselect"), running=running_run(), ballroom_tune=tune))
             if u.path == "/api/apps": return self._send(200, list_apps())
             if u.path == "/api/room": return self._send(200, ROOM.to_json())
             if u.path == "/api/soccer_field":
@@ -164,8 +168,27 @@ class H(BaseHTTPRequestHandler):
                 toys, hid = random_hidden(ROOM.moved(b.get("moves")), placement_for(b.get("app")), b.get("toyset", ["ball", "duck", "duck2"]), start, int(b.get("seed", 1)))
                 if toys is None: return self._send(200, {"ok": False, "error": f"could not hide the toys from that start spot ({hid}); move the crab nearer the middle"})
                 return self._send(200, {"ok": True, "toys": toys, "hidden_behind": hid})
+            if u.path == "/api/ballroom_analyze":
+                from jhs.ballroom.music import analyze
+                path = b.get("path") or ""
+                if Path(path).suffix.lower() not in AUDIO_EXT:
+                    return self._send(400, {"ok": False, "error": "that is not an audio file I know"})
+                info = analyze(path)
+                info.pop("beats", None)
+                return self._send(200, info)
             if u.path == "/api/start":
                 if running_run(): return self._send(409, {"error": f"a run is already going ({running_run()}); stop it first"})
+                if b.get("app") == "builtin:ballroom":
+                    audio = b.get("audio") or ""
+                    if not audio or not Path(audio).expanduser().is_file():
+                        return self._send(400, {"ok": False, "error": "choose a music track first"})
+                    if Path(audio).suffix.lower() not in AUDIO_EXT:
+                        return self._send(400, {"ok": False, "error": "that is not an audio file I know"})
+                    sec = b.get("seconds")
+                    proc, rd = runner.start_ballroom(audio, seconds=float(sec) if sec else None,
+                                                     live=bool(b.get("live", True)), play_audio=bool(b.get("play", True)))
+                    with LOCK: STATE["procs"][rd.name] = proc
+                    return self._send(200, {"ok": True, "run": rd.name, "kind": "ballroom"})
                 info = inspect(b["app"])
                 if info.get("kind") == "hide_seek":
                     toys = b.get("toys"); start = b.get("start")

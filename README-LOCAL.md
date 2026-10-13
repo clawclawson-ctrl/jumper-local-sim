@@ -14,6 +14,7 @@ This folder lets you run Jumper apps on your own Mac:
   view and MP4. No task and no score. See section 7b. **Not yet tested in full sim trials.**
 - **Plain official apps** (no vision brain). These open MuJoCo's 3D window and you drive the crab yourself.
 - **Tidy-up vision** (`jumper_tidy_vision.app`). The seed places the ball, the duck and the mini football in the tidy-up room. The crab sorts the ball and the mini football into the basket and the duck into the crate. You can watch it live and save the run as an MP4.
+- **Moonlit ballroom**. Two crabs, Moon (silver) and Candle (gold), dance to a track you choose. The page reads the tempo, the feet step the way this robot walks, and the camera follows the pair. See section 7d.
 
 Nothing is uploaded anywhere. The page you use is served by your own Mac at `http://127.0.0.1`, and no other
 computer can reach it.
@@ -438,6 +439,16 @@ option, but it was not tested.
 
 SOCCER_RESULTS
 
+## 7d. Moonlit ballroom
+
+Two crabs dance as a couple in a moonlit ballroom. **Moon** is silver, **Candle** is gold. They stay about 0.68 m apart and do not take claws. You give them a music track. The page reads the tempo and the meter and builds a dance in that style: a bow, a box step, a promenade, a turn. The feet step the way this robot walks, three at a time. A bow or a wave keeps the front claws for the gesture while the legs underneath keep stepping. The camera stays in the room, follows the pair, and swings around them when the phrase turns.
+
+This is not a vision run. The crabs are posed from recorded dance clips and a walking step. Nothing is uploaded.
+
+On the page, choose **Moonlit Ballroom** (first in the list). If `Waltz of the Moonlit Ballroom - clawclawson.m4a` is in your Downloads folder, that path is already filled in. **Listen for the pulse** reports the tempo (that waltz reads as 98 beats a minute, in three, about 3:12). **Start the dance** plays the song on this Mac while the picture runs, and saves an MP4 under `~/Movies/Jumper Hide & Seek/`. You can dance the whole song, the first 75 seconds, or a 30-second opening.
+
+The tune itself is not in this folder. Bring your own track (mp3, m4a, wav, aac, flac, or ogg).
+
 ## 8. Plain official apps and the tidy-up app
 
 - **Plain apps** (any app without a vision brain): choose it, pick a room, and press **Start**. MuJoCo's 3D window
@@ -496,6 +507,7 @@ jhs/                        the local sim: setup/live page (server.py, web/), ru
                             pushable obstacles (pushable.py), push test, checks,
                             brains/ = flybrain runner + the fly-inspired rules (SIM-ONLY), fly_overlay.py
                             soccer/ = crab soccer 1v1 (field, two brains, referee, overlay, MP4)
+                            ballroom/ = moonlit ballroom (two crabs, a track you choose, tripod feet, camera, MP4)
 PUSH_TESTS.md, tests/push/  the push-test results from our Linux box
 toolkit/                    the official Jumper toolkit (KingKongRobotics/jumper, commit 7d3cc4b), only the parts needed
 prebuilt/                   fallback controller for macOS (universal2), built from toolkit/deploy/fsm

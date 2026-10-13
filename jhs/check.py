@@ -89,6 +89,21 @@ def soccer():
     m = ROOT / "maps" / "jumper-soccer-field.map"; assert m.exists(), "maps/jumper-soccer-field.map missing"
     from jhs.soccer import brain as SB
     return f"{a.name}: soccer, controller {i['controller']}; field map {m.stat().st_size} B; brain unit test: " + "; ".join(SB.unit())
+def ballroom():
+    from jhs.ballroom.choreo import check as dance_check
+    from jhs.ballroom.gait import check as gait_check
+    msg = dance_check() + "; " + gait_check()
+    import mujoco
+    from jhs.ballroom.scene import build
+    model, data, _moon, _candle = build()
+    rend = mujoco.Renderer(model, 180, 320)
+    mujoco.mj_kinematics(model, data)
+    rend.update_scene(data)
+    img = rend.render()
+    rend.close()
+    assert int(img.max()) > 8, "the ballroom rendered black"
+    return msg
+item("moonlit ballroom (two crabs, floor pattern)", ballroom)
 item("crab soccer app + field + brains (SIM-ONLY)", soccer)
 item("room v7 map", lambda: (ROOT / "maps" / "jumper-hide-seek-v7.map").stat().st_size)
 if "--full" in sys.argv:

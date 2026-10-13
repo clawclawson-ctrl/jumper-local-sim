@@ -67,6 +67,20 @@
  <div class="row"><button id="sstart" onclick="sStart()">Start match</button><span id="smsg"></span></div>
 </section>
 
+<section id="ballroomsetup" style="display:none">
+ <h2>2 · The moonlit ballroom</h2>
+ <div class="muted">Two crabs, one dance. <b>Moon</b> is silver, <b>Candle</b> is gold. They bow, box-step, promenade and turn, on the beat of whatever track you give them. They stay a polite distance apart — a crab does not take its partner's claw. The feet step the way this robot walks, three at a time; a bow or a wave keeps the front claws for the gesture. The camera follows the pair and swings around them when the phrase turns. Waltz of the Moonlit Ballroom is the first tune.</div>
+ <div class="row">Track <input id="bpath" style="width:420px" placeholder="an mp3, m4a, or wav">
+  <button class="sec" onclick="document.getElementById('bupl').click()">Choose…</button>
+  <input type="file" id="bupl" accept=".mp3,.wav,.m4a,.aac,.flac,.ogg,audio/*" style="display:none" onchange="bUpload(this.files[0])">
+  <button class="sec" onclick="bPick()">Finder…</button></div>
+ <div class="row"><button class="sec" onclick="bListen()">Listen for the pulse</button> <span id="bpulse" class="muted"></span></div>
+ <div class="row">How much of the song
+  <select id="blen"><option value="">the whole song</option><option value="75">the first dance (75 seconds)</option><option value="30">the opening (30 seconds)</option></select>
+  <label><input type="checkbox" id="bplay" checked> play the music on this computer while the picture runs</label></div>
+ <div class="row"><button id="bstart" onclick="bStart()">Start the dance</button> <span id="bmsg"></span></div>
+</section>
+
 <section id="other" style="display:none;max-width:640px">
  <h2>2 · Run this app</h2><div id="othertext" class="muted"></div>
  <div id="tidyopts" style="display:none">
@@ -85,8 +99,10 @@
  <div class="row"><span id="stat" class="muted"></span></div>
  <div class="row"><button class="danger" id="stopbtn" onclick="stopRun()">Stop</button></div>
  <div id="donebox" style="display:none">
-  <h2>Save this run as an MP4</h2>
-  <div class="muted">Re-renders the recorded run with the full overlay (camera + boxes, dToF, crab's own map, scorer marked SIM TRUTH, sim clock, SIM-ONLY label) at 1x real speed.</div>
+  <h2 id="donehead">Save this run as an MP4</h2>
+  <div class="muted" id="donenote">Re-renders the recorded run with the full overlay (camera + boxes, dToF, crab's own map, scorer marked SIM TRUTH, sim clock, SIM-ONLY label) at 1x real speed.</div>
+  <div id="ballroomdone" style="display:none" class="muted"></div>
+  <div id="rerender">
   <div class="row">Folder <input id="folder" style="width:360px"> Size <select id="size"><option value="1080">1920x1080</option><option value="720">1280x720 (faster)</option></select>
    <button onclick="saveMp4(curRun)">Save run as MP4</button></div>
   <details id="audiobox"><summary>Add your own audio (optional — without it the MP4 is silent)</summary>
@@ -102,6 +118,7 @@
     <span class="muted">It is always cut at the end of the video. The video itself stays 1x and unchanged (AAC 192k audio is added).</span></div>
    <div id="amsg" class="muted"></div>
   </details>
+  </div>
   <div class="row"><div class="bar"><div id="rbar"></div></div><span id="rmsg" class="muted"></span><button class="sec" id="reveal" style="display:none" onclick="reveal()">Show in Finder</button></div>
  </div>
  <pre id="log"></pre>
@@ -117,7 +134,7 @@ async function api(p,b){const r=await fetch(p,b===undefined?{}:{method:'POST',he
 function app(){return APPS.find(a=>a.path===$('appsel').value);}
 async function init(){INFO=await api('/api/info'); ROOM=await api('/api/room'); $('folder').value=INFO.movies; await loadApps(INFO.preselect); draw(); check(); runsList(); if(INFO.running){curRun=INFO.running; showLive();}}
 async function loadApps(sel){APPS=await api('/api/apps'); const s=$('appsel'); s.innerHTML='';
- for(const a of APPS){const o=document.createElement('option'); o.value=a.path; o.textContent=(a.ok?'':'✗ ')+a.name+(a.kind?'  ['+({hide_seek:'hide & seek, vision brain',tidy_vision:'tidy-up, vision brain',flybrain:'flybrain: fly-inspired rules, sim-only',official:'plain app: you drive',soccer:'crab soccer 1v1, two vision brains, sim-only'}[a.kind])+']':''); s.appendChild(o);}
+ for(const a of APPS){const o=document.createElement('option'); o.value=a.path; o.textContent=(a.ok?'':'✗ ')+a.name+(a.kind?'  ['+({hide_seek:'hide & seek, vision brain',tidy_vision:'tidy-up, vision brain',flybrain:'flybrain: fly-inspired rules, sim-only',official:'plain app: you drive',soccer:'crab soccer 1v1, two vision brains, sim-only',ballroom:'moonlit ballroom, two crabs, your music'}[a.kind])+']':''); s.appendChild(o);}
  if(!sel){const hs=APPS.find(a=>a.kind==='hide_seek'&&a.local_hooks); if(hs) sel=hs.path;} if(sel) s.value=sel; s.onchange=appChanged; appChanged();}
 function appChanged(){const a=app(); if(!a){$('appinfo').textContent='no apps yet: load one';return;}
  $('appinfo').innerHTML=a.ok?`<b>${a.title}</b> · ${a.modes.length} modes · controller: ${a.controller}`+(a.sim_only?' · <span class="warn">SIM-ONLY VISION CONCEPT</span>':'')+(a.warning?`<br><span class="warn">${a.warning}</span>`:''):`<span class="err">${a.error}</span>`;
@@ -125,7 +142,9 @@ function appChanged(){const a=app(); if(!a){$('appinfo').textContent='no apps ye
  $('setup').style.display=room?'':'none'; $('flynote').style.display=(a.kind==='flybrain')?'':'none';
  if(a.kind==='flybrain'&&$('tmax').dataset.kind!=='fly'){$('tmax').value='120';} if(a.kind!=='flybrain'&&$('tmax').dataset.kind==='fly'){$('tmax').value='600';} $('tmax').dataset.kind=a.kind==='flybrain'?'fly':'hs';
  const soc=a.ok&&a.kind==='soccer'; $('soccersetup').style.display=soc?'':'none'; if(soc&&!SF) sInit();
- const other=a.ok&&!room&&!soc; $('other').style.display=other?'':'none';
+ const ball=a.ok&&a.kind==='ballroom'; $('ballroomsetup').style.display=ball?'':'none';
+ if(ball&&!$('bpath').value&&INFO.ballroom_tune) $('bpath').value=INFO.ballroom_tune;
+ const other=a.ok&&!room&&!soc&&!ball; $('other').style.display=other?'':'none';
  $('tidyopts').style.display=a.kind==='tidy_vision'?'':'none';
  $('mapsel_row').style.display=a.kind==='official'?'':'none';
  $('othertext').innerHTML=a.kind==='official'?'A plain app has no vision brain: you drive the crab yourself in MuJoCo\'s 3D window (keyboard: the app\'s own keys, printed in the Terminal; a gamepad works too). Close the window to stop.':
@@ -219,6 +238,15 @@ async function sStart(){const a=app(); $('smsg').textContent='starting… (two c
  const r=await api('/api/start',{app:a.path,setup:sb,pushable:$('spush').checked,seed:+$('smseed').value,tmax:+$('stmax').value,speed:+$('sspeed').value,physics_hz:$('sphys').value?+$('sphys').value:null,live:$('slive').checked,goals_to_win:Math.max(1,Math.min(10,+$('sgoals').value||3)),aggression:{A:Math.max(0,Math.min(1,+$('saggA').value)),B:Math.max(0,Math.min(1,+$('saggB').value))}});
  if(!r.ok){$('smsg').innerHTML='<span class="err">'+(r.error||'failed')+'</span>';return;} $('smsg').textContent=''; curRun=r.run; showLive();}
 // ---------- run ----------
+async function bUpload(f){if(!f)return; $('bpulse').textContent='copying '+f.name+' …'; const r=await fetch('/api/upload_audio',{method:'POST',headers:{'X-Filename':f.name},body:f}); const i=await r.json();
+ if(!i.ok){$('bpulse').innerHTML='<span class="err">'+(i.error||'failed')+'</span>';return;} $('bpath').value=i.path; $('bpulse').textContent=i.name;}
+async function bPick(){const i=await api('/api/pick_audio',{}); if(i.ok){$('bpath').value=i.path; $('bpulse').textContent=i.name;} else $('bpulse').textContent=i.error||'';}
+async function bListen(){const p=$('bpath').value.trim(); if(!p){$('bpulse').textContent='choose a track first';return;} $('bpulse').textContent='listening…';
+ const r=await api('/api/ballroom_analyze',{path:p}); $('bpulse').innerHTML=r.ok?`<span class="ok">${r.pulse}</span>`:`<span class="err">${r.error||'could not read it'}</span>`;}
+async function bStart(){const p=$('bpath').value.trim(); if(!p){$('bmsg').innerHTML='<span class="err">choose a track first</span>';return;}
+ $('bmsg').textContent='the ballroom is opening…';
+ const sec=$('blen').value; const r=await api('/api/start',{app:'builtin:ballroom',audio:p,seconds:sec?+sec:null,play:$('bplay').checked,live:true});
+ if(!r.ok){$('bmsg').innerHTML='<span class="err">'+(r.error||'failed')+'</span>';return;} $('bmsg').textContent=''; curRun=r.run; showLive();}
 async function startRun(){const a=app(); $('startmsg').textContent='starting…';
  const r=await api('/api/start',{app:a.path,toys,start:crab,moves,pushable:$('pushable').checked,seed:+$('seed').value,tmax:+$('tmax').value,speed:+$('speed').value,physics_hz:$('phys').value?+$('phys').value:null,live:$('livebox').checked});
  if(!r.ok){$('startmsg').innerHTML='<span class="err">'+(r.error||'failed')+'</span>';return;} $('startmsg').textContent=''; curRun=r.run; showLive();}
@@ -231,14 +259,19 @@ async function startOther(){const a=app(); const body={app:a.path,map:$('mapsel'
 function showLive(){$('livesec').style.display=''; $('donebox').style.display='none'; $('runname').textContent=curRun; $('stopbtn').disabled=false; clearInterval(poll); poll=setInterval(tick,700); tick();}
 async function tick(){const s=await api('/api/status?run='+encodeURIComponent(curRun)); if(s.error&&!s.run){return;}
  const im=new Image(); im.onload=()=>{$('live').src=im.src;}; im.src='/api/live.jpg?run='+encodeURIComponent(curRun)+'&t='+Date.now();
- let t=`sim t = ${s.t!=null?(+s.t).toFixed(1):'…'} s`; if(s.rate) t+=` · ${(+s.rate).toFixed(2)}x real time`; if(s.state) t+=` · ${s.state}`;
+ let t; if(s.kind==='ballroom'){t=(s.title||'Moonlit Ballroom'); if(s.t!=null) t+=` · ${Math.floor(s.t/60)}:${String(Math.floor(s.t%60)).padStart(2,'0')}`; if(s.state) t+=` · ${s.state}`; if(s.rate) t+=` · ${(+s.rate).toFixed(2)}x`;}
+ else {t=`sim t = ${s.t!=null?(+s.t).toFixed(1):'…'} s`; if(s.rate) t+=` · ${(+s.rate).toFixed(2)}x real time`; if(s.state) t+=` · ${s.state}`;}
  if(s.kind==='soccer'&&s.ref) t+=` · referee (SIM TRUTH): ${s.ref}`;
  if(s.kind==='fly'||s.kind==='flybrain'){if(s.sub) t+=` (${s.sub})`; if(s.counts) t+=' · '+Object.entries(s.counts).filter(([k,v])=>v).map(([k,v])=>k+' '+v).join(', ');}
  if(s.kind==='tidy_vision'&&s.ntoys) t+=` · crab thinks sorted ${s.gathered}/${s.ntoys} · scorer (SIM TRUTH, not used by the crab) ${s.n_truth}/${s.ntoys} in the right bin`;
  else if(s.ntoys) t+=` · crab's own count ${s.gathered}/${s.ntoys} · scorer (SIM TRUTH, not used by the crab) ${s.n_truth}/${s.ntoys}`;
  $('stat').textContent=t; $('log').textContent=s.log_tail||'';
  if(!s.running){clearInterval(poll); $('stopbtn').disabled=true;
-  const R=s.result; let msg=(R&&R.kind==='soccer')?`${R.final||('RED '+R.score.RED+' - '+R.score.BLUE+' BLUE')} (referee, SIM TRUTH) · goals: `+((R.goals||[]).map(g=>g.team+(g.own_goal?' (own goal)':'')+' '+g.t+'s').join(', ')||'none')+` · falls RED ${(R.falls||{}).RED} BLUE ${(R.falls||{}).BLUE} · referee drop-balls ${R.drop_balls} <span class="warn">(SIM-ONLY VISION CONCEPT)</span>`:(R&&R.kind==='flybrain')?`finished: ${R.t_end} s sim, falls ${R.falls}, walked ${R.path_m} m · behaviours: `+Object.entries(R.counts||{}).map(([k,v])=>k+' '+v).join(', ')+(R.props_moved_m?' · props moved: '+(Object.entries(R.props_moved_m).filter(([k,v])=>v>=0.01).map(([k,v])=>k+' '+v.toFixed(2)+' m').join(', ')||'none'):'')+' <span class="warn">(SIM-ONLY, fly-inspired rules)</span>':(s.result&&s.result.n_correct!=null)?`finished: sorted into the right bin ${s.result.n_correct}/${s.result.n_toys} (SIM TRUTH), falls ${s.result.falls}`:s.result?`finished: found ${s.result.n_found}/${s.result.n_toys}, on the rug ${s.result.n_gathered}/${s.result.n_toys} (SIM TRUTH)`+(s.result.t_all_gathered!=null?`, all on the rug at ${s.result.t_all_gathered} s`:'')+`, falls ${s.result.falls}`+(s.result.props_moved_m?' · props moved by the crab: '+Object.entries(s.result.props_moved_m).filter(([k,v])=>v>=0.01).map(([k,v])=>k+' '+v.toFixed(2)+' m').join(', '):''):(s.exit_code? 'stopped with an error — see the log':'stopped');
+  const R=s.result;
+  if(R&&R.kind==='ballroom'){$('donehead').textContent='The dance is saved'; $('donenote').style.display='none'; $('rerender').style.display='none'; $('ballroomdone').style.display='';
+   $('ballroomdone').innerHTML=`${R.pulse||''}${R.mp4?`<br>${R.mp4}`:''}`; if(R.mp4){lastOut=R.mp4; $('reveal').style.display='';} $('donebox').style.display=''; $('stat').textContent=R.stopped?'stopped':'the dance is over'; runsList(); return;}
+  $('donenote').style.display=''; $('rerender').style.display=''; $('ballroomdone').style.display='none'; $('donehead').textContent='Save this run as an MP4';
+  let msg=(R&&R.kind==='soccer')?`${R.final||('RED '+R.score.RED+' - '+R.score.BLUE+' BLUE')} (referee, SIM TRUTH) · goals: `+((R.goals||[]).map(g=>g.team+(g.own_goal?' (own goal)':'')+' '+g.t+'s').join(', ')||'none')+` · falls RED ${(R.falls||{}).RED} BLUE ${(R.falls||{}).BLUE} · referee drop-balls ${R.drop_balls} <span class="warn">(SIM-ONLY VISION CONCEPT)</span>`:(R&&R.kind==='flybrain')?`finished: ${R.t_end} s sim, falls ${R.falls}, walked ${R.path_m} m · behaviours: `+Object.entries(R.counts||{}).map(([k,v])=>k+' '+v).join(', ')+(R.props_moved_m?' · props moved: '+(Object.entries(R.props_moved_m).filter(([k,v])=>v>=0.01).map(([k,v])=>k+' '+v.toFixed(2)+' m').join(', ')||'none'):'')+' <span class="warn">(SIM-ONLY, fly-inspired rules)</span>':(s.result&&s.result.n_correct!=null)?`finished: sorted into the right bin ${s.result.n_correct}/${s.result.n_toys} (SIM TRUTH), falls ${s.result.falls}`:s.result?`finished: found ${s.result.n_found}/${s.result.n_toys}, on the rug ${s.result.n_gathered}/${s.result.n_toys} (SIM TRUTH)`+(s.result.t_all_gathered!=null?`, all on the rug at ${s.result.t_all_gathered} s`:'')+`, falls ${s.result.falls}`+(s.result.props_moved_m?' · props moved by the crab: '+Object.entries(s.result.props_moved_m).filter(([k,v])=>v>=0.01).map(([k,v])=>k+' '+v.toFixed(2)+' m').join(', '):''):(s.exit_code? 'stopped with an error — see the log':'stopped');
   $('stat').innerHTML=msg; if(s.can_save_mp4) $('donebox').style.display=''; runsList();}}
 async function stopRun(){await api('/api/stop',{run:curRun}); $('stat').textContent='stopping (it saves the recording first)…';}
 async function uploadAudio(f){if(!f)return; $('amsg').textContent='copying '+f.name+' …'; const r=await fetch('/api/upload_audio',{method:'POST',headers:{'X-Filename':f.name},body:f}); const i=await r.json();
@@ -253,7 +286,7 @@ async function rtick(){const p=await api('/api/render_status?out='+encodeURIComp
  if(p.finished){clearInterval(rpoll); $('reveal').style.display='';} else if(p.exit_code){clearInterval(rpoll); $('rmsg').innerHTML='<span class="err">rendering failed — see render_*.log in the run folder</span>';}}
 function reveal(){api('/api/reveal',{path:lastOut});}
 async function runsList(){const rs=await api('/api/runs'); if(!rs.length){$('runs').textContent='none yet';return;}
- let h='<table><tr><th>run</th><th>result (SIM TRUTH)</th><th></th></tr>'; for(const r of rs){const res=(r.result&&r.result.kind==='soccer')?`soccer: RED ${r.result.score.RED} - ${r.result.score.BLUE} BLUE, ${r.result.t_end} s`:(r.result&&r.result.kind==='flybrain')?`flybrain: ${r.result.t_end} s, falls ${r.result.falls}, path ${r.result.path_m} m`:(r.result&&r.result.n_correct!=null)?`tidy: sorted ${r.result.n_correct}/${r.result.n_toys}, ${r.result.t_end} s`:r.result?`found ${r.result.n_found}/${r.result.n_toys}, on rug ${r.result.n_gathered}/${r.result.n_toys}, ${r.result.t_end} s`:(r.running?'running':'');
+ let h='<table><tr><th>run</th><th>result (SIM TRUTH)</th><th></th></tr>'; for(const r of rs){const res=(r.result&&r.result.kind==='ballroom')?`ballroom: ${r.result.title||''} ${r.result.bpm?Math.round(r.result.bpm)+' bpm':''} ${r.result.t_end||''}s`:(r.result&&r.result.kind==='soccer')?`soccer: RED ${r.result.score.RED} - ${r.result.score.BLUE} BLUE, ${r.result.t_end} s`:(r.result&&r.result.kind==='flybrain')?`flybrain: ${r.result.t_end} s, falls ${r.result.falls}, path ${r.result.path_m} m`:(r.result&&r.result.n_correct!=null)?`tidy: sorted ${r.result.n_correct}/${r.result.n_toys}, ${r.result.t_end} s`:r.result?`found ${r.result.n_found}/${r.result.n_toys}, on rug ${r.result.n_gathered}/${r.result.n_toys}, ${r.result.t_end} s`:(r.running?'running':'');
   h+=`<tr><td>${r.run}</td><td>${res}</td><td>${r.can_save_mp4?`<button class="sec" onclick="curRun='${r.run}';saveMp4('${r.run}')">Save as MP4</button>`:''}</td></tr>`;} $('runs').innerHTML=h+'</table>';}
 setup(); init().then(()=>{ if(location.search.includes('selftest=1')) selftest(); });
 // ?selftest=1 : drags a toy, the crab and a prop with synthetic pointer events and reports what the page decided (used by the Linux tests)

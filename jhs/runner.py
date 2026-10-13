@@ -186,6 +186,25 @@ def strip_controller(app: Path, out: Path) -> Path:
     return out
 
 
+def start_ballroom(audio, seconds=None, live=True, play_audio=True):
+    """Two crabs, the moonlit ballroom, a track. Returns (Popen, run_dir)."""
+    rd = new_run_dir("ballroom")
+    (rd / "local_run.json").write_text(json.dumps(dict(kind="ballroom", audio=str(audio), started=time.time())))
+    env = base_env()
+    env["JHS_AUDIO"] = str(Path(audio).expanduser())
+    env["JHS_LIVE"] = "1" if live else "0"
+    env["JHS_PLAY_AUDIO"] = "1" if play_audio else "0"
+    if seconds:
+        env["JHS_SECONDS"] = str(float(seconds))
+    env["VS_OUT"] = str(rd)
+    env["JHS_LIVE_DIR"] = str(rd / "live")
+    env["JHS_STOP"] = str(rd / "STOP")
+    log = open(rd / "log.txt", "w")
+    proc = subprocess.Popen([sys.executable, "-m", "jhs.ballroom.show"], cwd=str(ROOT), env=env,
+                            stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    return proc, rd
+
+
 def start_official(app, scene=None, viewer=True):
     """A plain app (no vision brain): the official player with MuJoCo's viewer -- you drive with the keyboard/gamepad.
     On macOS MuJoCo's passive viewer must run under `mjpython`."""
@@ -250,7 +269,8 @@ def run_state(rd: Path) -> dict:
         r = json.loads((rd / "result.json").read_text())
         st.update(finished=True, result={k: r.get(k) for k in ("n_found", "n_gathered", "n_toys", "t_all_gathered", "t_end", "falls", "coverage", "placed", "hidden_behind", "n_correct", "props_moved_m",
                                                 "kind", "counts", "path_m", "time_s", "stopped", "toys_moved_m",
-                                                "score", "goals", "own_goals", "drop_balls", "ball_idle_s", "final", "winner")})
+                                                "score", "goals", "own_goals", "drop_balls", "ball_idle_s", "final", "winner",
+                                                "mp4", "bpm", "meter", "style", "title", "pulse", "phrases")})
     log = rd / "log.txt"
     if log.exists():
         txt = log.read_text(errors="replace")
