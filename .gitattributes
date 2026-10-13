@@ -6,4 +6,5 @@
 *.pt binary
 *.png binary
 *.ttf binary
+*.m4a binary
 *.sh text eol=lf

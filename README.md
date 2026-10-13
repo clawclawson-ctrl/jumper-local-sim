@@ -103,7 +103,7 @@ Choose **Moonlit Ballroom** on the page. It is the first item in the list, and i
 
 - **Moon** is silver and **Candle** is gold. They stay about 0.68 m apart and do not take claws. They bow, box-step, promenade, pirouette, and walk a few square-dance figures: a do-si-do, an allemande, a star, a sashay, a swing, a balance, and a courtesy turn. They face the way they are walking.
 - Give them a track (mp3, m4a, wav, aac, flac or ogg). **Listen for the pulse** reads the tempo and the meter. **Start the dance** plays the song on this Mac while the picture runs, and saves an MP4 under `~/Movies/Jumper Hide & Seek/`. You can dance the whole song, the first 75 seconds, or a 30-second opening.
-- The tune list starts with Waltz of the Moonlit Ballroom when that file is in your Downloads folder, and later tunes follow it. None of the music is in this repo.
+- The tune list starts with Waltz of the Moonlit Ballroom, and later tunes follow it. The tracks ship in `jhs/ballroom/tunes` under the same Apache 2.0 license as the rest of this repo. You can still give the page a track of your own.
 - The feet step the way this robot walks, three at a time, and the knees stay bent the way it stands. A planted foot that the next step has left behind is picked up. A bow, a wave, or a spin keeps the front claws for the gesture, and those claws stay just above the floor. The camera stays in the room and follows the pair.
 - This is not a vision run. The crabs are posed from their own recorded dances plus that walking step. Nothing is uploaded.
 

@@ -7,17 +7,18 @@ thirds of a metre apart. No claws are joined. SIM-ONLY.
 from pathlib import Path
 
 BUILTIN = "builtin:ballroom"
-DEFAULT_TUNE = Path.home() / "Downloads" / "Waltz of the Moonlit Ballroom - clawclawson.m4a"
+TUNES = Path(__file__).resolve().parent / "tunes"
+DEFAULT_TUNE = TUNES / "Waltz of the Moonlit Ballroom - clawclawson.m4a"
 # The waltz stays first. Later tunes follow it, in this order.
 TUNE_FILES = (
     ("Waltz of the Moonlit Ballroom", DEFAULT_TUNE),
-    ("Square Waltz", Path.home() / "Downloads" / "Square Waltz - clawclawson.m4a"),
-    ("Square Waltz (Banjo)", Path.home() / "Downloads" / "Square Waltz (Banjo) - clawclawson.m4a"),
-    ("Waltz of the Moonlit Ballroom (Piano)", Path.home() / "Downloads" / "Waltz of the Moonlit Ballroom (Piano) - clawclawson.m4a"),
-    ("Flamenco Waltz", Path.home() / "Downloads" / "Flamenco Waltz - clawclawson.m4a"),
-    ("Flamenco Waltz (Accordion)", Path.home() / "Downloads" / "Flamenco Waltz (Accordion) - clawclawson.m4a"),
-    ("Cuban Waltz (Brass)", Path.home() / "Downloads" / "Cuban Waltz (Brass) - clawclawson.m4a"),
-    ("Cuban Waltz (Drums)", Path.home() / "Downloads" / "Cuban Waltz (Drums) - clawclawson.m4a"),
+    ("Square Waltz", TUNES / "Square Waltz - clawclawson.m4a"),
+    ("Square Waltz (Banjo)", TUNES / "Square Waltz (Banjo) - clawclawson.m4a"),
+    ("Waltz of the Moonlit Ballroom (Piano)", TUNES / "Waltz of the Moonlit Ballroom (Piano) - clawclawson.m4a"),
+    ("Flamenco Waltz", TUNES / "Flamenco Waltz - clawclawson.m4a"),
+    ("Flamenco Waltz (Accordion)", TUNES / "Flamenco Waltz (Accordion) - clawclawson.m4a"),
+    ("Cuban Waltz (Brass)", TUNES / "Cuban Waltz (Brass) - clawclawson.m4a"),
+    ("Cuban Waltz (Drums)", TUNES / "Cuban Waltz (Drums) - clawclawson.m4a"),
 )
 
 

@@ -8,3 +8,4 @@ __pycache__/
 *.mp4
 .DS_Store
 !toolkit/**/*.mp4
+!jhs/ballroom/tunes/*.mp4
