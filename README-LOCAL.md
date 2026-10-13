@@ -441,7 +441,7 @@ SOCCER_RESULTS
 
 ## 7d. Moonlit ballroom
 
-Two crabs dance as a couple in a moonlit ballroom. **Moon** is silver, **Candle** is gold. They stay about 0.68 m apart and do not take claws. You give them a music track. The page reads the tempo and the meter and builds a dance in that style: a bow, a box step, a promenade, a turn. The feet step the way this robot walks, three at a time. A bow or a wave keeps the front claws for the gesture while the legs underneath keep stepping. The camera stays in the room, follows the pair, and swings around them when the phrase turns.
+Two crabs dance as a couple in a moonlit ballroom. **Moon** is silver, **Candle** is gold. They stay about 0.68 m apart and do not take claws. You give them a music track. The page reads the tempo and the meter and builds a dance in that style: a bow, a box step, a promenade, a turn. The feet step the way this robot walks, three at a time, and the knees stay bent the way it stands. A bow or a wave keeps the front claws for the gesture while the legs underneath keep stepping, and those claws stay just above the floor. The camera stays in the room, follows the pair, and swings around them when the phrase turns.
 
 This is not a vision run. The crabs are posed from recorded dance clips and a walking step. Nothing is uploaded.
 

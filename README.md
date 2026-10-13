@@ -1,4 +1,4 @@
-# Jumper Local Sim — hide & seek, crab soccer, flybrain and more, on your Mac
+# Jumper Local Sim — hide & seek, crab soccer, a moonlit ballroom and more, on your Mac
 
 > **SIM-ONLY VISION CONCEPT.** The crab's camera picture and dToF range readings come from the simulator, and the
 > vision brains here are concepts. This is a simulation demo, not something a real Jumper can do today.
@@ -10,7 +10,8 @@ MuJoCo on a Mac. You can:
 - pick an app (`.app` bundle) and a room,
 - place toys, the crab's start point and heading, and **pushable obstacles**,
 - watch the run live in your browser (served only on `127.0.0.1`),
-- **save the run as a 1x-speed MP4** with the full overlay, and optionally add **your own audio track**.
+- **save the run as a 1x-speed MP4** with the full overlay, and optionally add **your own audio track**,
+- or skip the toys and watch two crabs dance in a moonlit ballroom to a track you choose.
 
 Included apps (in `apps/`):
 
@@ -21,6 +22,7 @@ Included apps (in `apps/`):
 | `flybrain.app` | The crab wanders on its own, steered by hand-written fly-inspired rules: looming escape, avoidance, fixate/approach, optomotor turns, exploration saccades. No task and no score. |
 | `jumper_tidy_vision.app` | Experimental tidy-up vision brain in the tidy-up room. |
 | `jumper-tidy-up.app` | The official tidy-up sample (policies byte-identical to the official bundle), with no vision brain. You drive it yourself. |
+| Moonlit Ballroom | Built into the page, not an `.app`. Two crabs dance to a track you choose. See below. |
 
 Full user guide: **[README-LOCAL.md](README-LOCAL.md)**.
 
@@ -95,12 +97,25 @@ copy in `prebuilt/` by itself.
 - The setup page lets you place the ball, both crabs and **obstacles anywhere inside the field**, including goal mouths, the centre and kickoff spots. Overlaps only show a yellow warning. You can also set *Goals to win* (default 3) and a time cap.
 - Testing so far: a few short matches with real pushed goals and 0 falls. With the walk-back, two returns took about 15 s each, with no timeouts. It is still experimental: the brains are simple, with no passing. In v1.1.0 the crab part of the referee reset didn't actually move the crabs, so its test score isn't comparable. That is fixed in v1.1.1.
 
+### Moonlit ballroom
+
+Choose **Moonlit Ballroom** on the page. It is the first item in the list, and it is built into the page rather than shipped as an `.app`.
+
+- **Moon** is silver and **Candle** is gold. They stay about 0.68 m apart and do not take claws.
+- Give them a track (mp3, m4a, wav, aac, flac or ogg). **Listen for the pulse** reads the tempo and the meter. **Start the dance** plays the song on this Mac while the picture runs, and saves an MP4 under `~/Movies/Jumper Hide & Seek/`. You can dance the whole song, the first 75 seconds, or a 30-second opening.
+- If `Waltz of the Moonlit Ballroom - clawclawson.m4a` is in your Downloads folder, that path is already filled in. The tune itself is not in this repo.
+- The feet step the way this robot walks, three at a time, and the knees stay bent the way it stands. A bow or a wave keeps the front claws for the gesture, and those claws stay just above the floor. The camera stays in the room and follows the pair.
+- This is not a vision run. The crabs are posed from their own recorded dances plus that walking step. Nothing is uploaded.
+
+The longer guide is section 7d of [README-LOCAL.md](README-LOCAL.md).
+
 ## Real vs sim-only
 
 | real (from the official toolkit) | sim-only (this repo) |
 |---|---|
 | Jumper robot model, walking/gesture policies, `mjrl_fsm` controller, `.app` bundle format | camera pictures and dToF readings rendered by MuJoCo |
 | MuJoCo physics of the crab | vision brains (hide & seek, tidy vision, flybrain rules) |
+| | the moonlit ballroom (recorded dances and a walking step, not a vision brain) |
 | | the "scorer" line and soccer referee (sim truth; the crabs never read it) |
 | | pushable obstacles and room setup UI |
 
@@ -125,7 +140,8 @@ install.sh, run.sh     installer and launcher
 apps/                  the five .app bundles above
 maps/                  hide & seek room v7, tidy-up room, soccer field (MuJoCo scene packages)
 jhs/                   the local sim: setup/live page, runner, overlay, MP4 renderer + audio, pushable obstacles,
-                       checks; brains/ = flybrain runner + fly-inspired rules; soccer/ = crab soccer
+                       checks; brains/ = flybrain runner + fly-inspired rules; soccer/ = crab soccer;
+                       ballroom/ = moonlit ballroom (two crabs, a track you choose, tripod feet, camera, MP4)
 toolkit/               the needed parts of the official Jumper toolkit (KingKongRobotics/jumper @ 7d3cc4b), unchanged
 prebuilt/              fallback macOS (universal2) controller, built from toolkit/deploy/fsm
 tests/, PUSH_TESTS.md  push-test results
