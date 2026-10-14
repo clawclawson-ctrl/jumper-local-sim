@@ -198,20 +198,29 @@ class Brain:
         # match vision shots to previous ones to estimate velocity
         seen = []
         for d in dets:
-            z = d["xy"]; pred = None
+            z = d["xy"]; pred = None; hist = [(t, z.copy())]
             if self.shots:
                 cand = min(self.shots, key=lambda s: np.linalg.norm(s["xy"] + s["v"] * (t - s["t"]) - z))
                 if np.linalg.norm(cand["xy"] + cand["v"] * (t - cand["t"]) - z) < 0.45:
                     dt = max(0.05, t - cand["t"]); v = (z - cand["xy"]) / dt
                     if np.linalg.norm(v) < 1.2: pred = 0.5 * cand["v"] + 0.5 * v
                     else: pred = cand["v"]
+                    # seed 22 (bfdc398): frame-to-frame velocity from noisy ranges swung the predicted arrival 1.1..3.5 s and the
+                    # sidestep side flipped. Fit a line over the track's last ~1.5 s instead; shots fly at a known constant speed.
+                    hist = [h for h in cand.get("hist", []) if t - h[0] < 1.5] + hist
+                    if len(hist) >= 3 and hist[-1][0] - hist[0][0] >= 0.3:
+                        T = np.array([h[0] for h in hist]); Z = np.array([h[1] for h in hist]); Tm = T - T.mean()
+                        vf = (Tm[:, None] * (Z - Z.mean(0))).sum(0) / max(1e-9, float((Tm ** 2).sum()))
+                        res = Z - (Z.mean(0) + Tm[:, None] * vf)
+                        if float(np.max(np.linalg.norm(res, axis=1))) > 0.3: hist = hist[-2:]          # a bounce: restart the fit
+                        elif np.linalg.norm(vf) > 0.15: pred = vf / np.linalg.norm(vf) * A.SHOT_SPEED
             if pred is None:
                 v2 = _vel2(d)
                 if v2 is not None and np.linalg.norm(v2) > 0.25: pred = v2 / np.linalg.norm(v2) * A.SHOT_SPEED
             if pred is None and self.opp is not None and t - self.opp_t < 3.0:     # first sighting: assume it came from the opponent
                 u = z - self.opp; nu = float(np.linalg.norm(u))
                 if nu > 0.1: pred = u / nu * A.SHOT_SPEED
-            seen.append(dict(xy=z.copy(), v=np.asarray(pred if pred is not None else np.zeros(2), float), t=t, rng=d["rng"], bbox=d["bbox"]))
+            seen.append(dict(xy=z.copy(), v=np.asarray(pred if pred is not None else np.zeros(2), float), t=t, rng=d["rng"], bbox=d["bbox"], hist=hist))
         self.shots = seen; self.shot_t = t if seen else self.shot_t
 
     def begin_return(self, spot, t):
@@ -351,6 +360,7 @@ class Brain:
             for dist in (0.15, 0.25, 0.35, 0.5, 0.65, 0.8):
                 g = me + u * dist
                 if wall_clear(*g) < INFL or occ[cell(g)] or wall_clear(*(me + u * dist * 0.5)) < INFL - 0.05: continue
+                if float((g - pc) @ side) * float((me - pc) @ side) < 0 and tt < 2.5: continue     # never step across a near path
                 clr = self._step_clear(g, tt); reach = dist / 0.28
                 if clr >= self.SAFE and reach <= tt + 0.1:
                     cost = dist + 0.02 * k_
@@ -698,6 +708,18 @@ def unit():
         spun += 0.1
     assert walked and spun <= SPIN_MAX + 0.15, (walked, spun)
     out.append(f"regression seed 44: no deadband turning at the start spot (stops within 11 deg, turns with rx >= {TURN_MIN}); spin watchdog walks after {spun:.1f} s")
+    # ---- regression: seed 22 (bfdc398) - noisy shot ranges flipped the sidestep across the path ----
+    rn = Brain("A", np.random.default_rng(6)); rn.reset(True, 0.0); rn.wait_until = 0; nz = np.random.default_rng(7)
+    me5 = np.array([-1.25, 1.40]); sides = []; tts = []; pos = me5.copy()
+    for k_ in range(14):
+        tk = 12.0 + 0.1 * k_; sp = np.array([0.0 - A.SHOT_SPEED * (tk - 12.0), 1.36])
+        los = sp - pos; los /= np.linalg.norm(los); obs = sp + los * nz.uniform(-0.08, 0.08)       # range noise along the line of sight
+        rn.observe(tk, dict(opp=[], shots=[dict(xy=obs, rng=1.0, bbox=(0, 0, 1, 1))], obst=np.zeros((0, 3))), (pos[0], pos[1], 0.0))
+        rn.t = tk; rn.decide((pos[0], pos[1], 0.0))
+        if rn.state == "dodge" and rn.dodge_goal is not None and k_ >= 4:
+            sides.append(np.sign(rn.dodge_goal[1] - 1.36)); th_ = rn._threat(pos); tts.append(th_[0] if th_ else None)
+    assert sides and len(set(sides)) == 1 and sides[0] > 0, sides
+    out.append(f"regression seed 22: noisy shot track -> sidestep side stable ({len(sides)} ticks, never across the path), arrival estimates {min(t_ for t_ in tts if t_):.1f}-{max(t_ for t_ in tts if t_):.1f} s")
     # ---- openers ----
     rng = np.random.default_rng(11); cnt = {k: {o: 0 for o in OPENERS} for k in ("A", "B")}; worst = 9.0
     for _ in range(4000):
