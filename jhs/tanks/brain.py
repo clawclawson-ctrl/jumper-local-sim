@@ -203,8 +203,17 @@ class Brain:
                 cand = min(self.shots, key=lambda s: np.linalg.norm(s["xy"] + s["v"] * (t - s["t"]) - z))
                 if np.linalg.norm(cand["xy"] + cand["v"] * (t - cand["t"]) - z) < 0.45:
                     dt = max(0.05, t - cand["t"]); v = (z - cand["xy"]) / dt
-                    if np.linalg.norm(v) < 1.2: pred = 0.5 * cand["v"] + 0.5 * v
-                    else: pred = cand["v"]
+                    # seed 22 (bfdc398): one noisy step swung the heading. Until the line fit below has 0.3 s, keep the
+                    # heading we already have (at the known shot speed). A brand-new track (v ~ 0) still takes its first measurement.
+                    # seed 55 full match: blending the second frame flattened the heading by another 3 deg, into the L bracket.
+                    if np.linalg.norm(cand["v"]) < 0.15 and 0.25 < np.linalg.norm(v) < 1.2:
+                        pred = v / np.linalg.norm(v) * A.SHOT_SPEED
+                    elif np.linalg.norm(cand["v"]) >= 0.15:
+                        pred = cand["v"] / np.linalg.norm(cand["v"]) * A.SHOT_SPEED
+                    elif np.linalg.norm(v) < 1.2:
+                        pred = 0.5 * cand["v"] + 0.5 * v
+                    else:
+                        pred = cand["v"]
                     # seed 22 (bfdc398): frame-to-frame velocity from noisy ranges swung the predicted arrival 1.1..3.5 s and the
                     # sidestep side flipped. Fit a line over the track's last ~1.5 s instead; shots fly at a known constant speed.
                     hist = [h for h in cand.get("hist", []) if t - h[0] < 1.5] + hist
@@ -328,20 +337,41 @@ class Brain:
     DODGE_R = 0.38                   # react when a predicted pass comes this close (hit radius 0.18 + estimate error)
     SAFE = 0.36                      # a sidestep spot must clear the predicted path by this          # body + leg clearance a seen shot must miss by
 
+    def _fly(self, me, x, y, vx, vy, horizon, dt):
+        """predicted path under the arena rules. -> (min miss, time, velocity, position) and the path samples."""
+        bmin = (9.0, 0.0, (vx, vy), (x, y)); path = [(0.0, x, y)]
+        for i in range(int(horizon / dt)):
+            x, y, vx, vy, _b = A.reflect(x + vx * dt, y + vy * dt, vx, vy)
+            d = math.hypot(me[0] - x, me[1] - y); path.append(((i + 1) * dt, x, y))
+            if d < bmin[0] and not (d < 0.6 and _seg_blocked((x, y), me)): bmin = (d, (i + 1) * dt, (vx, vy), (x, y))
+        return bmin, path
+
+    def _headings(self, s):
+        """velocity samples. A track seen for under 0.35 s has a heading good to only ~20 deg (seed 55: the shot was 0.28 m
+        from the opponent, so a 0.12 m position error flattened the heading 16 deg and the predicted bounce off the L bracket
+        hid a direct hit). Longer tracks keep the line-fit heading only."""
+        v = np.asarray(s["v"], float); spd = float(np.linalg.norm(v)); ang = math.atan2(v[1], v[0])
+        yield v
+        hist = s.get("hist") or []
+        if not (len(hist) >= 1 and (len(hist) < 3 or hist[-1][0] - hist[0][0] < 0.35)): return
+        for deg in (-20, -15, -10, -5, 5, 10, 15, 20):
+            a = ang + math.radians(deg)
+            yield np.array([math.cos(a) * spd, math.sin(a) * spd])
+
     def _threat(self, me, horizon=3.5, dt=0.05):
         """the most urgent seen shot whose predicted path (wall / fixed-wall bounces included, arena rules) passes within DODGE_R:
-        -> (time, miss, velocity at closest approach, position at closest approach) or None."""
+        -> (time, miss, velocity at closest approach, position at closest approach) or None.
+        A short track also tries headings within 20 deg and reacts to the one that passes closest."""
         best = None
         for s in self.shots:
             if float(np.linalg.norm(s["v"])) < 0.1: continue
-            x, y = float(s["xy"][0]), float(s["xy"][1]); vx, vy = float(s["v"][0]), float(s["v"][1]); bmin = (9.0, 0.0, (vx, vy), (x, y))
-            path = [(0.0, x, y)]
-            for i in range(int(horizon / dt)):
-                x, y, vx, vy, _b = A.reflect(x + vx * dt, y + vy * dt, vx, vy)
-                d = math.hypot(me[0] - x, me[1] - y); path.append(((i + 1) * dt, x, y))
-                if d < bmin[0] and not (d < 0.6 and _seg_blocked((x, y), me)): bmin = (d, (i + 1) * dt, (vx, vy), (x, y))
-            if bmin[0] < self.DODGE_R and (best is None or bmin[1] < best[0]):
-                best = (bmin[1], bmin[0], np.array(bmin[2]), np.array(bmin[3])); self.threat_path = np.array(path)
+            x0, y0 = float(s["xy"][0]), float(s["xy"][1]); chosen = None
+            for vv in self._headings(s):
+                bmin, path = self._fly(me, x0, y0, float(vv[0]), float(vv[1]), horizon, dt)
+                if bmin[0] < self.DODGE_R and (chosen is None or bmin[0] < chosen[0]):
+                    chosen = (bmin[0], bmin[1], bmin[2], bmin[3], path)
+            if chosen and (best is None or chosen[1] < best[0]):
+                best = (chosen[1], chosen[0], np.array(chosen[2]), np.array(chosen[3])); self.threat_path = np.array(chosen[4])
         return best
 
     def _step_clear(self, g, tt):
@@ -741,6 +771,22 @@ def unit():
     assert rg.shots and rg.shots[0].get("ghost"), rg.shots
     rg.t = 27.0; rg.decide((me6[0], me6[1], 1.9)); assert rg.state == "dodge", rg.state
     out.append("regression seed 55: shot seen for 0.2 s then out of view while turning -> remembered (dead-reckoned) and dodged")
+    # ---- regression: seed 55 full match - heading from (shot - opponent) was 16 deg too flat, so the path bounced off the
+    # L bracket (miss 0.73 m) and the seen shot was not dodged. A short track must try headings within 20 deg. ----
+    rh = Brain("B", np.random.default_rng(9)); rh.reset(True, 0.0); rh.wait_until = 0
+    opp55 = np.array([-0.01, -1.025]); z55 = np.array([0.401, -0.934]); me55 = np.array([1.54, -0.479])
+    per55 = lambda xy: dict(opp=[dict(xy=opp55, rng=1.6, bbox=(0, 0, 1, 1))], shots=[dict(xy=xy, rng=1.15, bbox=(0, 0, 1, 1))], obst=np.zeros((0, 3)))
+    rh.observe(26.1, per55(z55), (me55[0], me55[1], 2.881))
+    nom = rh._fly(me55, float(z55[0]), float(z55[1]), float(rh.shots[0]["v"][0]), float(rh.shots[0]["v"][1]), 3.5, 0.05)[0]
+    assert nom[0] > rh.DODGE_R, nom                         # the point estimate bounces off the bracket and looks safe
+    rh.decide((me55[0], me55[1], 2.881)); assert rh.state == "dodge", rh.state
+    g55 = rh.dodge_goal
+    assert g55 is not None and TF.wall_clear(*g55) >= INFL, g55
+    truth_v = np.array([0.53, 0.29]); truth_v = truth_v / np.linalg.norm(truth_v) * A.SHOT_SPEED
+    truth_p = np.array([0.371, -0.961])
+    rh.threat_path = np.array(rh._fly(me55, float(truth_p[0]), float(truth_p[1]), float(truth_v[0]), float(truth_v[1]), 3.5, 0.05)[1])
+    assert rh._step_clear(g55, 2.1) >= rh.SAFE, rh._step_clear(g55, 2.1)
+    out.append(f"regression seed 55 full match: 16 deg flat heading still dodges (goal {np.round(g55, 2)}, {TF.wall_clear(*g55):.2f} m from walls, true path cleared by {rh._step_clear(g55, 2.1):.2f} m)")
     # ---- openers ----
     rng = np.random.default_rng(11); cnt = {k: {o: 0 for o in OPENERS} for k in ("A", "B")}; worst = 9.0
     for _ in range(4000):
