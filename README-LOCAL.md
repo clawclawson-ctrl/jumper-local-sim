@@ -507,7 +507,8 @@ does not move against the crab's own shot from one frame to the next (an enemy s
 frame-to-frame motion also gives a new shot its first velocity. Spin watchdog: more than 3 s of turn-only commands makes the
 crab walk (strafing) to a new search target. At its start spot the crab stops turning once within 11 degrees, and it never
 turns with commands small enough to stall in the app's deadband. A tracked shot's velocity comes from a line fitted over its last 1.5 s at the known shot speed, and a sidestep
-never crosses a predicted path that is less than 2.5 s away.
+never crosses a predicted path that is less than 2.5 s away. A shot that leaves the camera view, for example while the crab turns, is remembered for up to 2.5 s, its path
+predicted under the arena rules, and still dodged.
 
 **Spectator camera.** Camera = Follow action (default) or Fixed overview (setup page; headless `--camera follow|fixed`). Follow
 frames both crabs plus nearby shots in flight. It zooms in when they are close and out to the overview when they are far

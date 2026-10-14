@@ -220,7 +220,18 @@ class Brain:
             if pred is None and self.opp is not None and t - self.opp_t < 3.0:     # first sighting: assume it came from the opponent
                 u = z - self.opp; nu = float(np.linalg.norm(u))
                 if nu > 0.1: pred = u / nu * A.SHOT_SPEED
-            seen.append(dict(xy=z.copy(), v=np.asarray(pred if pred is not None else np.zeros(2), float), t=t, rng=d["rng"], bbox=d["bbox"], hist=hist))
+            seen.append(dict(xy=z.copy(), v=np.asarray(pred if pred is not None else np.zeros(2), float), t=t, t_seen=t, rng=d["rng"], bbox=d["bbox"], hist=hist))
+        # seed 55 (e9f79ca): a shot seen for 0.2 s left the camera view while the crab turned and was forgotten -> no dodge.
+        # Keep unmatched tracks for up to 2.5 s, dead-reckoned with the arena rules, unless they should be in view right now.
+        for q in self.shots:
+            if any(np.linalg.norm(q["xy"] + q["v"] * (t - q["t"]) - z["xy"]) < 0.45 for z in seen): continue
+            age = t - q.get("t_seen", q["t"])
+            if age > 2.5 or np.linalg.norm(q["v"]) < 0.1: continue
+            dt = max(0.0, t - q["t"]); n = max(1, int(dt / 0.02)); px, py, vx, vy = float(q["xy"][0]), float(q["xy"][1]), float(q["v"][0]), float(q["v"][1])
+            for _ in range(n): px, py, vx, vy, _b = A.reflect(px + vx * dt / n, py + vy * dt / n, vx, vy)
+            u = np.array([px - x, py - y]); du = float(np.linalg.norm(u))
+            if du < 2.5 and du > 0.35 and abs(wrap(math.atan2(u[1], u[0]) - yaw)) < 0.75 and not _seg_blocked((px, py), (x, y)): continue   # should be seen: gone
+            seen.append(dict(q, xy=np.array([px, py]), v=np.array([vx, vy]), t=t, t_seen=q.get("t_seen", q["t"]), ghost=True))
         self.shots = seen; self.shot_t = t if seen else self.shot_t
 
     def begin_return(self, spot, t):
@@ -720,6 +731,16 @@ def unit():
             sides.append(np.sign(rn.dodge_goal[1] - 1.36)); th_ = rn._threat(pos); tts.append(th_[0] if th_ else None)
     assert sides and len(set(sides)) == 1 and sides[0] > 0, sides
     out.append(f"regression seed 22: noisy shot track -> sidestep side stable ({len(sides)} ticks, never across the path), arrival estimates {min(t_ for t_ in tts if t_):.1f}-{max(t_ for t_ in tts if t_):.1f} s")
+    # ---- regression: seed 55 (e9f79ca) - a shot seen briefly, then out of view while turning, must still be dodged ----
+    rg = Brain("B", np.random.default_rng(8)); rg.reset(True, 0.0); rg.wait_until = 0
+    me6 = np.array([1.54, -0.48]); vs = np.array([1.0, 0.1]); vs = vs / np.linalg.norm(vs) * A.SHOT_SPEED; p0 = me6 - vs * 1.9
+    for k_ in range(2):
+        rg.observe(26.1 + 0.1 * k_, dict(opp=[], shots=[dict(xy=p0 + vs * 0.1 * k_, rng=1.1, bbox=(0, 0, 1, 1))], obst=np.zeros((0, 3))), (me6[0], me6[1], 3.0))
+    for k_ in range(2, 10):                                    # turned away: nothing in view any more
+        rg.observe(26.1 + 0.1 * k_, dict(opp=[], shots=[], obst=np.zeros((0, 3))), (me6[0], me6[1], 1.9))
+    assert rg.shots and rg.shots[0].get("ghost"), rg.shots
+    rg.t = 27.0; rg.decide((me6[0], me6[1], 1.9)); assert rg.state == "dodge", rg.state
+    out.append("regression seed 55: shot seen for 0.2 s then out of view while turning -> remembered (dead-reckoned) and dodged")
     # ---- openers ----
     rng = np.random.default_rng(11); cnt = {k: {o: 0 for o in OPENERS} for k in ("A", "B")}; worst = 9.0
     for _ in range(4000):
