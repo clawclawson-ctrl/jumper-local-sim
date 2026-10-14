@@ -1,4 +1,4 @@
-# Jumper Local Sim — hide & seek, crab soccer, a moonlit ballroom and more, on your Mac
+# Jumper Local Sim — hide & seek, crab soccer, Crab Tanks, a moonlit ballroom and more, on your Mac
 
 > **SIM-ONLY VISION CONCEPT.** The crab's camera picture and dToF range readings come from the simulator, and the
 > vision brains here are concepts. This is a simulation demo, not something a real Jumper can do today.
@@ -11,6 +11,7 @@ MuJoCo on a Mac. You can:
 - place toys, the crab's start point and heading, and **pushable obstacles**,
 - watch the run live in your browser (served only on `127.0.0.1`),
 - **save the run as a 1x-speed MP4** with the full overlay, and optionally add **your own audio track**,
+- pit two crabs against each other in **Crab Tanks**, an Atari Combat-style turret duel,
 - or skip the toys and watch two crabs dance in a moonlit ballroom to a track you choose.
 
 Included apps (in `apps/`):
@@ -19,6 +20,7 @@ Included apps (in `apps/`):
 |---|---|
 | `jumper_hide_seek_vision.app` | Hide & seek. The crab searches the room with its (simulated) camera and pushes every toy it finds onto the rug. |
 | `jumper_soccer_vision.app` | Crab soccer 1v1. Two crabs (RED vs BLUE) each find the ball with their own simulated camera and push it into the other goal. Rounded, bouncy field walls; optional obstacles; the scorer celebrates, then a referee reset; choose *Goals to win* (1-10). |
+| `jumper_tanks_vision.app` | Crab Tanks 1v1, inspired by Atari's Combat (1977). Two crabs hunt each other with their own simulated cameras, aim independent turrets while walking, and fire slow, visible shots the other crab can see and dodge. Three Combat arenas; choose *Hits to win* (1-10). |
 | `flybrain.app` | The crab wanders on its own, steered by hand-written fly-inspired rules: looming escape, avoidance, fixate/approach, optomotor turns, exploration saccades. No task and no score. |
 | `jumper_tidy_vision.app` | Experimental tidy-up vision brain in the tidy-up room. |
 | `jumper-tidy-up.app` | The official tidy-up sample (policies byte-identical to the official bundle), with no vision brain. You drive it yourself. |
@@ -48,6 +50,7 @@ Other commands:
 ./run.sh --headless --random 31 --tmax 60 --mp4 ~/Movies/test.mp4 --size 720    # no window: run and record
 ./run.sh --headless --app apps/flybrain.app --random 31 --tmax 30 --mp4 ~/Movies/fly.mp4 --size 720
 ./run.sh --headless --app apps/jumper_soccer_vision.app --tmax 180 --seed 31 --obstacles 3 --goals-to-win 3
+./run.sh --headless --app apps/jumper_tanks_vision.app --tmax 120 --seed 11 --openings random --camera follow
 ./run.sh --add-audio VIDEO.mp4 SONG.mp3 [OUT.mp4] [--start S --delay S --volume V --fade S --loop]
 ```
 
@@ -97,6 +100,17 @@ copy in `prebuilt/` by itself.
 - The setup page lets you place the ball, both crabs and **obstacles anywhere inside the field**, including goal mouths, the centre and kickoff spots. Overlaps only show a yellow warning. You can also set *Goals to win* (default 3) and a time cap.
 - Testing so far: a few short matches with real pushed goals and 0 falls. With the walk-back, two returns took about 15 s each, with no timeouts. It is still experimental: the brains are simple, with no passing. In v1.1.0 the crab part of the referee reset didn't actually move the crabs, so its test score isn't comparable. That is fixed in v1.1.1.
 
+### Crab Tanks notes (SIM-ONLY VISION CONCEPT)
+
+- Inspired by the tank games in Atari's **Combat** (1977). Choose an arena: **Open field**, **Simple maze** (default) or **Complex maze**, rebuilt from the original manual and ROM playfields at 7.0 x 4.5 m. Some passages are widened so the crabs' legs fit (every gap is at least 0.67 m).
+- Each crab runs the official walking policy plus its own brain ([`jhs/tanks/`](jhs/tanks/)) and sees only its own simulated camera, dToF and pose. A sim add-on **turret** aims on its own within the camera's view while the crab walks.
+- **Shots** are slow, glowing cyan balls (0.6 m/s) that both crabs can actually see. One shot of your own in flight at a time, a 2.5 s cooldown, optional wall bounces, and obstacles block shots, so they work as cover.
+- The brain keeps a **map of where the opponent can't be** (floor it has seen empty is crossed off, and spreads back at walking speed), searches the likeliest spots, leads its shots, and takes cover. **Dodging comes first**: any seen shot, including a bounce shot, whose predicted path comes close overrides everything else, and the crab steps out of the way while keeping 0.30 m leg clearance from walls.
+- Each round, every crab rolls its own **opening** (peek around the near or far end of its barrier, hold and ambush, or push to the middle), so matches don't repeat. **Openings** can be *Random* or *Locked* to one opener per crab.
+- A hit stuns the target for 1.5 s and scores a point. The shooter dances, both crabs walk back behind their barriers, and the first to N hits wins. The referee and scoring use sim truth. The crabs never read it.
+- The **camera follows the action** (zooming to keep both crabs and shots in frame), or set it to a fixed overview. MP4 export at 1x includes both crabs' cameras, the belief heatmap and the scoreboard.
+- Testing: unit tests plus short headless matches on several seeds and on every arena, with no leg bumps, no falls and no hits from a shot the crab had already seen. It's still experimental: shots are fairly rare, and full first-to-3 matches have only been watched a few times.
+
 ### Moonlit ballroom
 
 Choose **Moonlit Ballroom** on the page. It is the first item in the list, and it is built into the page rather than shipped as an `.app`.
@@ -116,6 +130,7 @@ The longer guide is section 7d of [README-LOCAL.md](README-LOCAL.md).
 | Jumper robot model, walking/gesture policies, `mjrl_fsm` controller, `.app` bundle format | camera pictures and dToF readings rendered by MuJoCo |
 | MuJoCo physics of the crab | vision brains (hide & seek, tidy vision, flybrain rules) |
 | | the moonlit ballroom (recorded dances and a walking step, not a vision brain) |
+| | Crab Tanks turrets, shots, hit scoring and referee (sim truth; the crabs never read it) |
 | | the "scorer" line and soccer referee (sim truth; the crabs never read it) |
 | | pushable obstacles and room setup UI |
 
@@ -137,10 +152,10 @@ they carry no `.rknn` models.
 
 ```
 install.sh, run.sh     installer and launcher
-apps/                  the five .app bundles above
-maps/                  hide & seek room v7, tidy-up room, soccer field (MuJoCo scene packages)
+apps/                  the six .app bundles above
+maps/                  hide & seek room v7, tidy-up room, soccer field, tanks arena (MuJoCo scene packages)
 jhs/                   the local sim: setup/live page, runner, overlay, MP4 renderer + audio, pushable obstacles,
-                       checks; brains/ = flybrain runner + fly-inspired rules; soccer/ = crab soccer;
+                       checks; brains/ = flybrain runner + fly-inspired rules; soccer/ = crab soccer; tanks/ = Crab Tanks;
                        ballroom/ = moonlit ballroom (two crabs, a track you choose, tripod feet, camera, MP4)
 toolkit/               the needed parts of the official Jumper toolkit (KingKongRobotics/jumper @ 7d3cc4b), unchanged
 prebuilt/              fallback macOS (universal2) controller, built from toolkit/deploy/fsm
