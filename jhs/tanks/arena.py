@@ -19,7 +19,10 @@ MUZZLE = 0.22
 
 
 def validate(setup, strict=False):
-    return F.validate(setup, strict)
+    aid = str((setup or {}).get("arena") or F.ARENA)
+    spec = F.ARENAS.get(aid)
+    if spec is None: return [("error", f"unknown arena {aid}")]
+    return F.validate(setup, strict, pieces=spec["pieces"], start=spec["start"])
 
 
 def random_layout(seed, n=None):

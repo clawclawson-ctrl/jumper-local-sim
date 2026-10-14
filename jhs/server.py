@@ -91,8 +91,13 @@ class H(BaseHTTPRequestHandler):
                                             props={k: dict(label=v[1], hx=v[2], hy=v[3]) for k, v in SF.PROPS.items()}))
             if u.path == "/api/tanks_field":
                 from .tanks import field as TF
-                return self._send(200, dict(FX=TF.FX, FY=TF.FY, GW=0, GD=0, CENTRE_R=0, BALL_R=TF.BALL_R, CORNER_R=TF.CORNER_R, kickoff=TF.START, tanks_start=TF.START,
-                                            pieces=TF.PIECES, tk=True, props={k: dict(label=v[1], hx=v[2], hy=v[3]) for k, v in TF.PROPS.items()}))
+                aid = q.get("arena") or TF.DEFAULT
+                if aid not in TF.ARENAS: aid = TF.DEFAULT
+                spec = TF.ARENAS[aid]
+                arenas = {k: dict(label=TF.ARENAS[k]["label"], pieces=TF.ARENAS[k]["pieces"], start=TF.ARENAS[k]["start"], note=TF.ARENAS[k]["note"]) for k in TF.ORDER}
+                return self._send(200, dict(FX=TF.FX, FY=TF.FY, GW=0, GD=0, CENTRE_R=0, BALL_R=TF.BALL_R, CORNER_R=TF.CORNER_R,
+                                            kickoff=spec["start"], tanks_start=spec["start"], pieces=spec["pieces"], arena=aid, arenas=arenas,
+                                            tk=True, props={k: dict(label=v[1], hx=v[2], hy=v[3]) for k, v in TF.PROPS.items()}))
             if u.path == "/api/runs":
                 rs = sorted([d for d in runner.RUNS.glob("2*") if d.is_dir()], reverse=True)[:30]
                 return self._send(200, [dict(runner.run_state(d), running=(STATE["procs"].get(d.name) is not None and STATE["procs"][d.name].poll() is None)) for d in rs])

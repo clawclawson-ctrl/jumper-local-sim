@@ -41,6 +41,8 @@ def main():
     ap.add_argument("--opener-blue", default="PEEK_NEAR", help="tanks, --openings locked: PEEK_NEAR|PEEK_FAR|HOLD|PUSH_MID")
     ap.add_argument("--camera", choices=("follow", "fixed"), default=None, help="tanks: spectator camera: follow the action (default) or the fixed overview")
     ap.add_argument("--no-bounce", action="store_true", help="tanks: shots stop at the walls instead of bouncing")
+    ap.add_argument("--arena", choices=("open", "simple", "complex"), default=None,
+                    help="tanks: Combat playfield (open field, simple maze, complex maze). Default: the simple maze")
     ap.add_argument("--goals-to-win", type=int, default=3, choices=range(1, 11), metavar="1-10", help="soccer: first to this many goals wins (default 3; --tmax is the cap)")
     ap.add_argument("--aggression", default="0.7,0.7", help="soccer: RED,BLUE aggression 0 (cautious) .. 1 (aggressive), default 0.7,0.7")
     ap.add_argument("--obstacles", type=int, metavar="SEED", help="soccer: a random (mirror-symmetric) obstacle layout from this seed")
@@ -208,13 +210,14 @@ def tanks(a, info, audio):
     if a.seed is not None: op.setdefault("seed", a.seed)          # given seed -> reproducible openings; none -> new every match
     setup["openings"] = op
     if a.camera: setup["camera"] = a.camera
+    if a.arena: setup["arena"] = a.arena
     for l, m in TA.validate(setup): print(f"  {l}: {m}")
     if any(l == "error" for l, _ in TA.validate(setup)): sys.exit("invalid setup")
     tmax = a.tmax or 300.0; seed = a.seed if a.seed is not None else (a.random if a.random is not None else 1)
     proc, rd = runner.start_tanks(info["path"], setup=setup, seed=seed, tmax=tmax, speed=0.0 if a.uncapped else 1.0, live=not a.no_live,
                                   physics_hz=a.physics or (200 if a.fast else None), pushable=not a.fixed_obstacles,
                                   hits_to_win=a.hits_to_win, bounce=not a.no_bounce)
-    print(f"obstacles: {props or 'none'}\nrun folder: {rd}\n(SIM-ONLY VISION CONCEPT) crab tanks, {tmax:.0f} sim-seconds", flush=True)
+    print(f"arena: {setup.get('arena', 'simple')}\nobstacles: {props or 'none'}\nrun folder: {rd}\n(SIM-ONLY VISION CONCEPT) crab tanks, {tmax:.0f} sim-seconds", flush=True)
     try:
         last = 0
         while proc.poll() is None:
