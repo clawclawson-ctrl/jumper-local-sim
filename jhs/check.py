@@ -105,6 +105,14 @@ def ballroom():
     return msg
 item("moonlit ballroom (two crabs, floor pattern)", ballroom)
 item("crab soccer app + field + brains (SIM-ONLY)", soccer)
+def tanks():
+    a = ROOT / "apps" / "jumper_tanks_vision.app"
+    if not a.exists(): return "apps/jumper_tanks_vision.app not present (skipped)"
+    from jhs.apps import inspect as _insp
+    i = _insp(a); assert i["ok"] and i["kind"] == "tanks", i
+    from jhs.tanks import arena as TA, brain as TB
+    return f"{a.name}: tanks; unit tests: " + "; ".join(TA.unit() + TB.unit())
+item("crab tanks app + shots + brains (SIM-ONLY)", tanks)
 item("room v7 map", lambda: (ROOT / "maps" / "jumper-hide-seek-v7.map").stat().st_size)
 if "--full" in sys.argv:
     def world():

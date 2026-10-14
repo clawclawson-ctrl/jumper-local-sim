@@ -449,6 +449,29 @@ On the page, choose **Moonlit Ballroom** (first in the list). The tune list star
 
 Those tunes ship in this folder, under the same Apache 2.0 license as the rest of it. You can still bring your own track (mp3, m4a, wav, aac, flac, or ogg).
 
+## 7e. Crab Tanks 1v1 (`jumper_tanks_vision.app`) — SIM-ONLY VISION CONCEPT, experimental
+
+Two crabs hunt each other in the soccer-field arena (rounded, bouncy walls), in the spirit of the Atari game Combat ("Tanks").
+Each crab is the official walking app driven through a virtual gamepad by its own brain (`jhs/tanks/brain.py`), which uses only
+that crab's own sim camera, dToF and pose.
+
+- **Turret (sim add-on):** a small turret is drawn on each crab. It aims on its own, within the camera's field of view, while the crab walks.
+- **Shots:** slow (0.6 m/s) glowing cyan projectiles, drawn into every camera, so a crab can *see* a shot coming and step out of its path.
+  There is a 2.5 s cooldown, and only one of your own shots can be in flight. The page has a setting for shots bouncing off the walls
+  (on by default, up to 2 bounces; a shot lasts 6 s). Obstacles block shots, so they work as cover.
+- **Scoring (referee, SIM TRUTH):** a hit stuns the target for 1.5 s and scores a point. The shooter celebrates (a crab dance), then both
+  crabs walk back to their start spots. The first to N hits wins (*Hits to win*, 1–10, default 3). The match length is a time cap.
+- **Brain (hand-built, no ML training):** scan once (bounded), then explore when the opponent is not in view; hunt to a ~1.4 m stand-off;
+  lead the shot using the opponent's tracked velocity; dodge sideways when a seen shot's predicted path passes within ~0.3 m; take cover
+  behind a sensed obstacle when a shot is coming. Routes keep a 0.30 m leg clearance (half-span 0.25 m + margin), as in soccer.
+  RED and BLUE run the same mirror-symmetric code. A stuck/spin watchdog forces a walk.
+- **Setup:** choose the app, and the soccer setup map appears without the ball. Drag the crabs and obstacles anywhere, as in soccer.
+
+```
+./run.sh --headless --app apps/jumper_tanks_vision.app --tmax 120 --hits-to-win 3 [--no-bounce] [--obstacles SEED | --setup s.json]
+```
+An MP4 (1x, full overlay: both crabs' cameras with opponent/shot boxes, dToF, top view with turrets and shots, referee line) is saved as for soccer.
+
 ## 8. Plain official apps and the tidy-up app
 
 - **Plain apps** (any app without a vision brain): choose it, pick a room, and press **Start**. MuJoCo's 3D window

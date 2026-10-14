@@ -28,6 +28,9 @@ W, H = {"1080": (1920, 1080), "720": (1280, 720), "480": (848, 480)}[A.size]
 PROG = Path(str(OUT) + ".progress.json")
 def progress(**k): PROG.write_text(json.dumps(k))
 
+if INFO.get("kind") == "tanks":      # two-crab world + turrets/shots: jhs/tanks/render.py
+    from jhs.tanks.render import main as _tanks_render
+    _tanks_render(A, RUN, INFO, OUT, W, H, progress); sys.exit(0)
 if INFO.get("kind") == "soccer":     # two-crab world: its own replay (jhs/soccer/render.py)
     from jhs.soccer.render import main as _soccer_render
     _soccer_render(A, RUN, INFO, OUT, W, H, progress); sys.exit(0)

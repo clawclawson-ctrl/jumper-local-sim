@@ -150,6 +150,41 @@ def start_soccer(app, setup=None, seed=1, tmax=300.0, speed=1.0, live=True, live
     return proc, rd
 
 
+def start_tanks(app, setup=None, seed=1, tmax=300.0, speed=1.0, live=True, live_size=(1280, 720), physics_hz=None, pushable=True, hits_to_win=3, bounce=True):
+    """1v1 Crab Tanks (jhs/tanks/run.py) on the soccer field arena. setup = {A: [x, y, deg], B: [x, y, deg], props: {id: [x, y, deg]}}."""
+    from .soccer import field as SF
+    from .tanks import arena as TA
+    info = inspect(app)
+    if not info.get("ok"): raise ValueError(info.get("error"))
+    if info["kind"] != "tanks": raise ValueError("not a crab tanks app")
+    setup = dict(setup or {}); setup.pop("ball", None); setup.setdefault("A", list(TA.START["A"])); setup.setdefault("B", list(TA.START["B"]))
+    setup["props"] = {k: v for k, v in (setup.get("props") or {}).items() if k in SF.PROPS}
+    errs = [m for l, m in TA.validate(setup) if l == "error"]
+    if errs: raise ValueError("invalid setup: " + "; ".join(errs))
+    rd = new_run_dir("tanks")
+    (rd / "setup.json").write_text(json.dumps(setup, indent=1))
+    env = base_env()
+    env.update(VS_SEED=str(int(seed)), VS_OUT=str(rd), VS_TMAX=str(float(tmax)), VS_SAVEVIS="1", JHS_SPEED=str(float(speed)), TK_LIVE="1",
+               JHS_LIVE="1" if live else "0", JHS_LIVE_DIR=str(rd / "live"), JHS_STOP=str(rd / "STOP"), TK_SETUP=str(rd / "setup.json"),
+               TK_PUSHABLE="1" if pushable else "0", TK_HITS=str(max(1, min(10, int(hits_to_win)))), TK_BOUNCE="1" if bounce else "0",
+               JHS_LIVE_W=str(live_size[0]), JHS_LIVE_H=str(live_size[1]))
+    from .pushable import variant
+    scene = variant(MAPS["soccer"], rd / "scene.map", pushable=bool(pushable), moves=setup["props"] or None)
+    app_for_play = Path(info["path"])
+    if os.environ.get("JHS_FORCE_LOCAL_CONTROLLER") == "1":
+        app_for_play = strip_controller(app_for_play, rd / "app_local_controller.app")
+    (rd / "local_run.json").write_text(json.dumps(dict(app=str(app_for_play), app_original=info["path"], scene=str(scene), kind="tanks",
+                                                       pushable=bool(pushable), setup=setup, seed=seed, tmax=tmax, hits_to_win=int(hits_to_win), bounce=bool(bounce),
+                                                       physics_hz=physics_hz or 1000, speed=speed, started=time.strftime("%Y-%m-%d %H:%M:%S"), info=info), indent=1))
+    cmd = [sys.executable, str(PKG / "tanks" / "run.py"), "--app", str(app_for_play), "--scene", str(scene),
+           "--backend", "native", "--device", "cpu", "--headless", "--steps", "999999999"]
+    if physics_hz: cmd += ["--physics-hz", str(int(physics_hz))]
+    log = open(rd / "log.txt", "w")
+    proc = subprocess.Popen(cmd, cwd=str(rd), env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    (rd / "pid").write_text(str(proc.pid))
+    return proc, rd
+
+
 def start_tidy(app, seed=1, tmax=420.0, speed=1.0, live=True, live_size=(1280, 720)):
     """Tidy-up vision app (vision/tidy_vision.py) on the shipped tidy-up room. The seed places the toys.
     Live picture and, once the run has recorded, an MP4. The toys are not placed by hand."""
@@ -236,7 +271,9 @@ def save_mp4(run_dir, out=None, size="1080", folder=None, audio=None):
         if (rd / "result.json").exists(): r = json.loads((rd / "result.json").read_text())
         info = json.loads((rd / "local_run.json").read_text()) if (rd / "local_run.json").exists() else {}
         kind = r.get("kind") or info.get("kind")
-        if kind == "soccer":
+        if kind == "tanks":
+            sc = r.get("score") or {}; out = folder / f"jumper-tanks-{rd.name}-RED{sc.get('RED', 0)}-BLUE{sc.get('BLUE', 0)}-1x-{size}p.mp4"
+        elif kind == "soccer":
             sc = r.get("score") or {}; out = folder / f"jumper-soccer-{rd.name}-RED{sc.get('RED', 0)}-BLUE{sc.get('BLUE', 0)}-1x-{size}p.mp4"
         elif kind == "flybrain":
             out = folder / f"jumper-flybrain-{rd.name}-1x-{size}p.mp4"
@@ -269,7 +306,7 @@ def run_state(rd: Path) -> dict:
         r = json.loads((rd / "result.json").read_text())
         st.update(finished=True, result={k: r.get(k) for k in ("n_found", "n_gathered", "n_toys", "t_all_gathered", "t_end", "falls", "coverage", "placed", "hidden_behind", "n_correct", "props_moved_m",
                                                 "kind", "counts", "path_m", "time_s", "stopped", "toys_moved_m",
-                                                "score", "goals", "own_goals", "drop_balls", "ball_idle_s", "final", "winner",
+                                                "score", "goals", "own_goals", "hits", "shots_fired", "hits_to_win", "drop_balls", "ball_idle_s", "final", "winner",
                                                 "mp4", "bpm", "meter", "style", "title", "pulse", "phrases")})
     log = rd / "log.txt"
     if log.exists():
@@ -282,6 +319,6 @@ def run_state(rd: Path) -> dict:
     try: kind = json.loads((rd / "local_run.json").read_text()).get("kind")
     except Exception: kind = None
     st["kind"] = kind
-    need = ("qpos.npz", "vision_meta.json", "vision_tof.npz", "result.json") + (() if kind in ("flybrain", "soccer", "tidy_vision") else ("maps.npz",))
+    need = ("qpos.npz", "vision_meta.json", "vision_tof.npz", "result.json") + (() if kind in ("flybrain", "soccer", "tanks", "tidy_vision") else ("maps.npz",))
     st["can_save_mp4"] = all((rd / f).exists() for f in need)
     return st
