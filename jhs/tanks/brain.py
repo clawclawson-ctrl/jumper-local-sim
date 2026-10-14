@@ -55,10 +55,49 @@ def perceive(team, img, selfmask, cam_pos, cam_R, cam, tof, tof_pos, tof_R, tof_
     return dict(opp=opp, shots=keep, obst=obst)
 
 
+# ---- randomized opening strategies (same menu + same odds for RED and BLUE; layout and pockets fixed) ----
+OPENERS = ("PEEK_NEAR", "PEEK_FAR", "HOLD", "PUSH_MID")
+OPEN_P = (0.25, 0.25, 0.25, 0.25)
+JIT_XY, JIT_YAW = 0.06, math.radians(6)     # start-pose jitter inside the pocket (still behind the bracket, roughly facing the centre)
+HOLD_S, OPEN_MAX_S = 9.0, 16.0              # ambush wait / opener cap before the normal search takes over
+
+
+def roll_opening(rng, team, mode="random", locked=None):
+    """one crab's opening for one round. Same menu and odds for both teams; each crab rolls independently."""
+    op = locked if (mode == "locked" and locked in OPENERS) else OPENERS[int(rng.choice(len(OPENERS), p=OPEN_P))]
+    jx, jy = rng.uniform(-JIT_XY, JIT_XY, 2); jyaw = rng.uniform(-JIT_YAW, JIT_YAW)
+    return dict(opener=op, scan=int(rng.choice((-1, 1))), bias=int(rng.choice((-1, 1))), jit=(float(jx), float(jy), float(jyaw)),
+                side=int(np.sign(jy)) or int(rng.choice((-1, 1))))
+
+
+def roll_round(rng, cfg=None):
+    """both crabs' openings for one round. cfg = {mode: random|locked, A: name, B: name}. A and B draw from the same rng in turn."""
+    cfg = cfg or {}; mode = str(cfg.get("mode", "random")).lower()
+    return {k: roll_opening(rng, k, mode, cfg.get(k)) for k in ("A", "B")}
+
+
+def jittered_start(team, jit, base=None):
+    sx, sy, sh = base if base is not None else A.START[team]
+    return (round(sx + jit[0], 3), round(sy + jit[1], 3), round(sh + math.degrees(jit[2]), 1))
+
+
+def opener_waypoints(team, opener, side):
+    """team-relative waypoints (x mirrored for BLUE): list of (x, y, face_deg or None). 'side' is the y side of the near bracket end."""
+    dx = -1.0 if team == "A" else 1.0; fwd = 0.0 if team == "A" else 180.0
+    W = lambda x, y, f: (dx * x, y, f)
+    if opener == "PEEK_NEAR" or opener == "PEEK_FAR":
+        s = side if opener == "PEEK_NEAR" else -side
+        return [W(2.80, 1.12 * s, None), W(1.85, 1.20 * s, fwd)]
+    if opener == "HOLD":
+        return [W(2.85, 0.42 * side, math.degrees(math.atan2(1.0 * side, -dx * 0.6)))]
+    return [W(2.80, 1.12 * side, None), W(1.85, 1.20 * side, None), W(0.55, 0.0, fwd)]   # PUSH_MID: out round the end, into the mid gap
+
+
 class Brain:
     def __init__(self, team, rng=None, pushable=False, bounce=True):
         self.team = team; self.dirx = +1 if team == "A" else -1; self.pushable = bool(pushable); self.bounce = bool(bounce)
         self.mem = Memory(); self.rng = rng or np.random.default_rng(0)
+        self.op_name = ""
         self.counts = {"shots": 0, "hits_scored": 0, "dodges": 0, "searches": 0, "covers": 0, "hunts": 0, "explores": 0, "backoffs": 0}
         self.reset(kickoff=True, t=0.0)
 
@@ -74,6 +113,34 @@ class Brain:
         opp_start = A.START["B" if self.team == "A" else "A"]           # rules / map knowledge: where the opponent starts
         if not hasattr(self, "bel"): self.bel = OppBelief()
         self.bel.reset(opp_start[:2] if kickoff else None, sigma=0.3); self.bel_t = t; self.sgoal = None; self.spath = []; self.splan_t = -1e9
+        self.opening = None; self.op_wps = []; self.op_t0 = t; self.op_arrive = None; self.op_path = []; self.op_plan_t = -1e9
+
+    def set_opening(self, o, t):
+        """start a rolled opener (dict from roll_opening). Ends at the first sighting, a hit/stun, or after OPEN_MAX_S."""
+        self.op_name = o["opener"]; self.opening = dict(o); self.op_wps = list(opener_waypoints(self.team, o["opener"], o["side"])); self.op_t0 = t; self.op_arrive = None
+        self.op_path = []; self.op_plan_t = -1e9
+        self.bel.p *= np.clip(1.0 + 0.25 * o["bias"] * CY / FY, 0.5, 1.5); self.bel._norm()      # slight side bias in the belief
+
+    def _opener(self, pose):
+        x, y, yaw = pose; me = np.array([x, y]); t = self.t; o = self.opening; name = o["opener"]
+        if t - self.op_t0 > OPEN_MAX_S or not self.op_wps: self.opening = None; return None
+        gx, gy, face = self.op_wps[0]; g = np.array([gx, gy]); dg = float(np.linalg.norm(g - me))
+        self.state = "opener"
+        if dg < 0.15:
+            if len(self.op_wps) > 1: self.op_wps.pop(0); self.op_path = []; return self._opener(pose)
+            if self.op_arrive is None: self.op_arrive = t
+            dwell = HOLD_S if name == "HOLD" else 2.5
+            if t - self.op_arrive > dwell: self.opening = None; return None
+            # first look: sweep the turret to the rolled side first, then back
+            base = math.radians(face if face is not None else math.degrees(yaw)); ph = (t - self.op_arrive) / 1.2
+            self._aim(pose, base + o["scan"] * 0.7 * math.sin(ph))
+            self.sub = f"{name}: {'ambush, waiting' if name == 'HOLD' else 'peeking'} (scan {'left' if o['scan'] > 0 else 'right'} first)"
+            return self._drive(pose, me, face_yaw=base)
+        if t - self.op_plan_t > 1.0 or not self.op_path:
+            self.op_path = self.mem.plan(me, g, self.pushable, self._opp_block, sign=self.dirx) or [g]; self.op_plan_t = t
+        self._aim(pose, math.atan2(g[1] - y, g[0] - x) + o["scan"] * 0.35)
+        self.sub = f"{name}: to ({gx:.1f}, {gy:.1f}) {dg:.1f} m"
+        return self._follow(pose, self.op_path, g, "opener")
 
     def observe(self, t, per, pose):
         self.t = t; self.obst = per["obst"]; x, y, yaw = pose
@@ -82,7 +149,7 @@ class Brain:
         self.mem.mark_view(pose)
         # opponent belief: spread, then clear what I can see (or reset to a sighting)
         self.bel.spread(max(0.0, t - self.bel_t)); self.bel_t = t
-        if per["opp"]: self.bel.reset(min(per["opp"], key=lambda d: d["rng"])["xy"], sigma=0.12)
+        if per["opp"]: self.bel.reset(min(per["opp"], key=lambda d: d["rng"])["xy"], sigma=0.12); self.opening = None
         else: self.bel.seen_empty(self.mem.visible(pose, OppBelief.BEL_R, OppBelief.BEL_HFOV))
         if per["opp"]:
             d = min(per["opp"], key=lambda d: d["rng"]); z = np.asarray(d["xy"], float)
@@ -291,7 +358,7 @@ class Brain:
     def decide(self, pose):
         x, y, yaw = pose; me = np.array([x, y]); t = self.t
         if t < self.wait_until: self.state, self.sub = "kickoff", "ready"; return {}, None
-        if t < self.stun_until: self.state, self.sub = "stunned", "STUNNED"; return {}, None
+        if t < self.stun_until: self.state, self.sub = "stunned", "STUNNED"; self.opening = None; return {}, None
         dcmd = self._dodge(pose)                 # evasion overrides everything (incl. a stuck back-off in progress)
         if dcmd is not None: self.hold = None; self.stuck_ref = None; return dcmd, None
         if self.hold is not None:
@@ -339,6 +406,9 @@ class Brain:
                 self.sub += " · FIRE"
             return cmd, fire
 
+        if self.opening is not None and not have_opp:
+            ocmd = self._opener(pose)
+            if ocmd is not None: return ocmd, None
         # ---- search (opponent not seen): go to and look at the likeliest spot of my opponent belief ----
         return self._search(pose), None
 
@@ -414,6 +484,7 @@ class OppBelief:
 
 
 def unit():
+    TB_wrap = wrap
     out = []
     b = Brain("A", np.random.default_rng(1))
     # lead + fire when the opponent is in view, clear LOS
@@ -501,4 +572,44 @@ def unit():
     # no shot through a fixed wall
     b3 = Brain("A"); b3.reset(True, 0.0); assert not b3.shot_clear((-3.0, 0.0), (0.0, 0.0)) and b3.shot_clear((-0.6, 0.0), (0.6, 0.0))
     out.append("line of fire blocked by fixed walls")
+    # ---- openers ----
+    rng = np.random.default_rng(11); cnt = {k: {o: 0 for o in OPENERS} for k in ("A", "B")}; worst = 9.0
+    for _ in range(4000):
+        r = roll_round(rng)
+        for k in ("A", "B"):
+            o = r[k]; cnt[k][o["opener"]] += 1
+            sx, sy, sh = jittered_start(k, o["jit"]); worst = min(worst, TF.wall_clear(sx, sy))
+            assert 2.85 <= abs(sx) <= 3.15 and abs(sy) <= 0.12 and np.sign(sx) == (-1 if k == "A" else 1), (k, sx, sy)   # pocket, behind the spine
+            assert abs(TB_wrap(math.radians(sh) - math.radians(TF.START[k][2]))) <= JIT_YAW + 1e-9
+    assert worst >= INFL, worst
+    for k in ("A", "B"):
+        for o in OPENERS: assert abs(cnt[k][o] / 4000 - 0.25) < 0.03, cnt
+    out.append(f"jitter inside the pocket (min wall clearance {worst:.2f} m over 8000 starts); odds RED " + "/".join(str(cnt['A'][o]) for o in OPENERS) + " BLUE " + "/".join(str(cnt['B'][o]) for o in OPENERS))
+    a1, a2 = roll_round(np.random.default_rng(5)), roll_round(np.random.default_rng(5))
+    assert a1 == a2
+    for op in OPENERS:
+        for sd in (-1, 1): assert [(-x, y) for x, y, _ in opener_waypoints("A", op, sd)] == [(x, y) for x, y, _ in opener_waypoints("B", op, sd)]
+    lk = roll_round(np.random.default_rng(5), dict(mode="locked", A="HOLD", B="PUSH_MID")); assert lk["A"]["opener"] == "HOLD" and lk["B"]["opener"] == "PUSH_MID"
+    ra = [roll_round(np.random.default_rng(sd))["A"]["opener"] for sd in range(12)]; assert len(set(ra)) > 1
+    out.append("toggle: Random reproducible per seed + varies across seeds; Locked gives the chosen openers")
+    m = Memory(); legs = 0
+    for k in ("A", "B"):
+        for op in OPENERS:
+            for side in (-1, 1):
+                cur = np.array(TF.START[k][:2])
+                for (gx, gy, _f) in opener_waypoints(k, op, side):
+                    g = np.array([gx, gy]); assert TF.wall_clear(gx, gy) >= INFL, (k, op, side, gx, gy, TF.wall_clear(gx, gy))
+                    pth = m.plan(cur, g, False, sign=1 if k == "A" else -1); assert pth, (k, op, side, gx, gy)
+                    assert min(TF.wall_clear(*q) for q in pth) >= INFL - 0.06, (k, op, side); cur = g; legs += 1
+    out.append(f"openers reachable with 0.30 m clearance ({legs} legs, both teams, both sides)")
+    bo = Brain("A", np.random.default_rng(3)); bo.reset(True, 0.0); bo.wait_until = 0; bo.t = 1.0
+    bo.set_opening(dict(opener="PEEK_NEAR", side=1, scan=1, bias=1, jit=(0, 0, 0)), 1.0)
+    cmd, _ = bo.decide((-3.0, 0.0, 0.0)); assert bo.state == "opener" and cmd, bo.state
+    bo.op_wps = bo.op_wps[1:]; cmd, _ = bo.decide((-1.85, 1.0, 0.0)); assert bo.state == "opener", bo.state
+    bo.shots = [dict(xy=np.array([-1.85, 0.1]), v=np.array([0.0, A.SHOT_SPEED]), t=1.0, rng=1.0, bbox=(0, 0, 1, 1))]
+    cmd, _ = bo.decide((-1.85, 1.0, 0.0)); assert bo.state == "dodge" and bo.opening is not None, bo.state
+    bo.shots = []; bo.dodge_hold = -1e9; bo.t = 5.0
+    bo.observe(5.0, dict(opp=[dict(xy=np.array([-1.0, 1.2]), rng=1.9, bbox=(0, 0, 1, 1))], shots=[], obst=np.zeros((0, 3))), (-2.0, 1.2, 0.0))
+    assert bo.opening is None
+    out.append("dodge overrides an opener; first sighting drops the crab into the normal brain")
     return out

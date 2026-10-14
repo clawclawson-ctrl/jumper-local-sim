@@ -10,7 +10,7 @@ from . import arena as A
 
 TC = {"A": (235, 60, 40), "B": (60, 110, 240)}
 DC = {"opponent": (255, 120, 255), "shot": (60, 240, 255)}
-STATE = {"kickoff": "kickoff", "search": "looking for the opponent", "explore": "EXPLORE", "hunt": "HUNT",
+STATE = {"kickoff": "kickoff", "search": "looking for the opponent", "explore": "EXPLORE", "hunt": "HUNT", "opener": "OPENER",
          "cover": "COVER", "dodge": "DODGE", "backoff": "backing off (stuck)", "stunned": "STUNNED",
          "celebrate": "HIT! celebrating", "paused": "paused (hit)", "return": "RETURNING TO START",
          "push_obst": "PUSHING OBSTACLE", "referee": "referee reset"}
@@ -43,6 +43,8 @@ class TanksOverlay:
         st = (m or {}).get("state", ""); sub = (m or {}).get("sub", "")
         d.text((x0 + TW + S(10), y0 + PH + S(8)), STATE.get(st, st), font=self.f5, fill=(255, 235, 120))
         d.text((x0 + TW + S(10), y0 + PH + S(42)), sub[:36], font=self.f6, fill=(235, 235, 235))
+        if (m or {}).get("opener"):
+            d.text((x0 + TW + S(10), y0 + PH + S(86)), "opener: " + m["opener"] + ("" if m.get("opener_on") else " (done)"), font=self.f6, fill=(150, 220, 255))
         oa = (m or {}).get("opp_age")
         d.text((x0 + TW + S(10), y0 + PH + S(64)), "opp: " + ("in view" if oa is not None and oa < 0.25 else f"last seen {oa:.0f} s ago" if oa is not None and oa < 90 else "not seen yet"),
                font=self.f6, fill=(235, 235, 235))

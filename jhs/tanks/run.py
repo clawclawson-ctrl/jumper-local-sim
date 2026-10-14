@@ -23,6 +23,13 @@ OUTD = Path(os.environ.get("VS_OUT", "tanks_run")); OUTD.mkdir(parents=True, exi
 SAVEVIS = os.environ.get("VS_SAVEVIS", "1") == "1"
 SETUP = json.load(open(os.environ["TK_SETUP"])) if os.environ.get("TK_SETUP") else {}
 START = {k: [float(v) for v in (SETUP.get(k) or A.START[k])] for k in ("A", "B")}
+# randomized per-crab openings (same menu/odds for both). Seeded -> reproducible; no seed -> differs every match.
+OPEN_CFG = dict(SETUP.get("openings") or {}); OPEN_CFG.setdefault("mode", "random")
+OPEN_SEED = int(OPEN_CFG["seed"]) if OPEN_CFG.get("seed") not in (None, "") else int.from_bytes(os.urandom(4), "little")
+ORNG = np.random.default_rng(OPEN_SEED)
+ROUND = TB.roll_round(ORNG, OPEN_CFG); OPEN_LOG = []
+for _k in ("A", "B"):
+    if [round(v, 3) for v in START[_k]] == [round(float(v), 3) for v in A.START[_k]]: START[_k] = list(TB.jittered_start(_k, ROUND[_k]["jit"]))
 VW, VH, VIS_DT = 640, 480, 0.1
 RETURN_TIMEOUT, RET_POS, RET_YAW = 25.0, 0.15, math.radians(15)
 HITS_TO_WIN = max(1, min(10, int(os.environ.get("TK_HITS", "3"))))
@@ -82,6 +89,7 @@ def yaw_of(q): return math.atan2(2 * (q[0] * q[3] + q[1] * q[2]), 1 - 2 * (q[2] 
 
 
 def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None):
+    global ROUND
     import mujoco, imageio
     from scipy import ndimage
     un = env.unwrapped; sim = un.sim
@@ -161,6 +169,9 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
     obst_geom = np.array([(_root(model.geom_bodyid[g]) in _pbset) or _gn[g].startswith(("wall_", "corner_", "goal")) for g in range(model.ngeom)])
     bumps = {"A": 0, "B": 0}; bump_prev = {"A": False, "B": False}
     brains = {k: TB.Brain(k, np.random.default_rng(SEED * 31 + i), pushable=os.environ.get("TK_PUSHABLE", "1") == "1", bounce=BOUNCE) for i, k in enumerate(("A", "B"))}
+    for k in ("A", "B"): brains[k].set_opening(ROUND[k], 0.0)
+    OPEN_LOG.append(dict(round=1, **{F.TEAM[k]: ROUND[k]["opener"] for k in ("A", "B")}, start={F.TEAM[k]: START[k] for k in ("A", "B")}, contact=None))
+    print("[openings] seed=%d mode=%s round 1: RED %s, BLUE %s" % (OPEN_SEED, OPEN_CFG["mode"], ROUND["A"]["opener"], ROUND["B"]["opener"]), flush=True)
     HOOK = None
     if os.environ.get("TK_LIVE", "0") == "1" or os.environ.get("JHS_LIVE_DIR"):
         from jhs.tanks.live import TanksHook
@@ -216,6 +227,8 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                     p = TB.perceive(k, img, selfm, cpos, cR, cam, rngs, tpos, tR, tcam)
                     q = live.xquat[base[k]]; pose = (float(live.xpos[base[k]][0]), float(live.xpos[base[k]][1]), yaw_of(q))
                     br = brains[k]
+                    if p["opp"] and OPEN_LOG[-1]["contact"] is None and pending is None:
+                        OPEN_LOG[-1]["contact"] = dict(t=round(t, 1), by=F.TEAM[k], at=[round(pose[0], 2), round(pose[1], 2)])
                     br.turret = turret[k]; br.own_in_flight = any(s["owner"] == k for s in shots)   # proprioception: turret angle, "reloaded" lamp
                     br.stun_until = stun_until[k]
                     br.observe(t, p, pose); poses[k] = pose
@@ -253,7 +266,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                                     opp_age=round(min(t - br.opp_t, 99), 1),
                                     dets=[dict(cls="opponent", bbox=d["bbox"], rng=round(d["rng"], 2)) for d in p["opp"]] +
                                          [dict(cls="shot", bbox=d["bbox"], rng=round(d["rng"], 2)) for d in p["shots"]],
-                                    nshots_seen=len(br.shots), nobst=int(p["obst"].shape[0]), belief=br.bel.coarse(4).tolist())
+                                    nshots_seen=len(br.shots), nobst=int(p["obst"].shape[0]), belief=br.bel.coarse(4).tolist(), opener=br.op_name, opener_on=br.opening is not None)
                     if SAVEVIS:
                         (OUTD / "vis").mkdir(exist_ok=True)
                         imageio.imwrite(OUTD / "vis" / f"{k}_{len(vis_meta):05d}.jpg", img[::2, ::2], quality=85)
@@ -311,7 +324,9 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                         if winner is not None: end_at = t + 0.5; pending = ("over", 1e9)
                         else:
                             P = cur_props()
-                            spots = {k: (*F.free_spot(A.START[k][0], A.START[k][1], P, 0.30), A.START[k][2]) for k in ("A", "B")}
+                            ROUND = TB.roll_round(ORNG, OPEN_CFG)       # a fresh roll (opener + jitter) every round
+                            _js = {k: TB.jittered_start(k, ROUND[k]["jit"]) for k in ("A", "B")}
+                            spots = {k: (*F.free_spot(_js[k][0], _js[k][1], P, 0.30), _js[k][2]) for k in ("A", "B")}
                             ref_line = "referee: both crabs walk back to their start spots"; ev("walk_back", spots={F.TEAM[k]: spots[k] for k in spots})
                             pending = ("return", t, spots)
                             for k in ("A", "B"): brains[k].begin_return(spots[k], t)
@@ -324,7 +339,9 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                     if all(ok.values()) or late:
                         for k in (late or []): place_robot(k, *spots[k])
                         returns.append(dict(t=round(t - pending[1], 1), timeout=[F.TEAM[k] for k in (late or [])]))
-                        for k, b in brains.items(): b.reset(kickoff=True, t=t)
+                        for k, b in brains.items(): b.reset(kickoff=True, t=t); b.set_opening(ROUND[k], t)
+                        OPEN_LOG.append(dict(round=len(OPEN_LOG) + 1, **{F.TEAM[k]: ROUND[k]["opener"] for k in ("A", "B")}, start={F.TEAM[k]: list(spots[k]) for k in ("A", "B")}, contact=None))
+                        print("[openings] round %d: RED %s, BLUE %s" % (len(OPEN_LOG), ROUND["A"]["opener"], ROUND["B"]["opener"]), flush=True)
                         ref_line = (f"referee reset (timeout): {', '.join(F.TEAM[k] for k in late)} placed" if late else f"both crabs walked back ({t - pending[1]:.1f} s)") + f"; fight! ({score['A']}-{score['B']})"
                         ev("restart", took=round(t - pending[1], 1), late=[F.TEAM[k] for k in (late or [])]); pending = None; settle_until = t + 1.0
                 if step % 20 == 0:
@@ -339,7 +356,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                       f"shots={fired} falls={falls}", flush=True)
     finally:
         truth.close()
-        res = dict(kind="tanks", label="SIM-ONLY VISION CONCEPT", seed=SEED, tmax=TMAX, setup=dict(A=START["A"], B=START["B"], props=SETUP.get("props", {})),
+        res = dict(kind="tanks", label="SIM-ONLY VISION CONCEPT", seed=SEED, openings=dict(mode=OPEN_CFG["mode"], seed=OPEN_SEED, rounds=OPEN_LOG), tmax=TMAX, setup=dict(A=START["A"], B=START["B"], props=SETUP.get("props", {})),
                    bounce=BOUNCE, hits_to_win=HITS_TO_WIN, t_end=round(step * dt, 2), stopped=stopped,
                    score={"RED": score["A"], "BLUE": score["B"]}, hits=hits, shots_fired={F.TEAM[k]: v for k, v in fired.items()},
                    shot_ends=shot_end, close_misses_survived={F.TEAM[k]: v for k, v in dodges_ok.items()},

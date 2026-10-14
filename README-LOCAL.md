@@ -485,6 +485,19 @@ whose predicted path (including up to 2 wall or block bounces) passes within 0.3
 firing, hunting, cover and the walk-back. The crab strafes perpendicular to the shot, keeping 0.30 m from walls, or ducks
 behind nearer cover. It holds until the shot has passed, then resumes.
 
+**Openings.** Each round, each crab rolls its own opener from the same menu with the same odds (25% each):
+- PEEK_NEAR: peek around the near end of its bracket.
+- PEEK_FAR: peek around the far end.
+- HOLD: wait in the pocket and ambush.
+- PUSH_MID: head for the mid gap.
+
+Each crab also gets a small start jitter inside its pocket (±6 cm, ±6°), a random first scan side and a slight side bias in
+its belief map. The first sighting or a hit drops the crab into the normal brain, and dodge always overrides an opener.
+
+On the setup page, Openings = Random (default) or Locked, with a per-crab dropdown when Locked. An openings seed makes Random
+repeatable; leave it blank for a new roll every match. Headless: `--openings random|locked --opener-red X --opener-blue Y`;
+`--seed` also seeds the openings. The rolled openers and the first contact of each round are listed in `result.json`.
+
 ## 8. Plain official apps and the tidy-up app
 
 - **Plain apps** (any app without a vision brain): choose it, pick a room, and press **Start**. MuJoCo's 3D window

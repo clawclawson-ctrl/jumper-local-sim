@@ -60,7 +60,10 @@
  <div class="row">Match length <select id="stmax"><option value="300">5 min</option><option value="180">3 min</option><option value="120">2 min</option><option value="600">10 min</option></select>
   Speed <select id="sspeed"><option value="1">at most 1x real time</option><option value="0">as fast as possible</option></select>
   <label><input type="checkbox" id="spush" checked> Pushable obstacles</label>
-  <span id="tkopts" style="display:none">Hits to win <input id="thits" type="number" value="3" min="1" max="10" style="width:50px"> <label><input type="checkbox" id="tbounce" checked> Shots bounce off walls</label> (the match length is the cap; shots are slow so the crabs can dodge)</span>
+  <span id="tkopts" style="display:none">Hits to win <input id="thits" type="number" value="3" min="1" max="10" style="width:50px"> <label><input type="checkbox" id="tbounce" checked> Shots bounce off walls</label>
+   Openings <select id="topen" onchange="$('tlock').style.display=this.value==='locked'?'':'none'"><option value="random">Random</option><option value="locked">Locked</option></select>
+   <span id="tlock" style="display:none">RED <select id="topA"></select> BLUE <select id="topB"></select></span>
+   openings seed <input id="topseed" type="number" placeholder="new each match" style="width:110px"> (the match length is the cap; shots are slow so the crabs can dodge)</span>
   <span id="scopts">Aggression RED <input id="saggA" type="number" value="0.7" min="0" max="1" step="0.1" style="width:50px"> BLUE <input id="saggB" type="number" value="0.7" min="0" max="1" step="0.1" style="width:50px">
   Goals to win <input id="sgoals" type="number" value="3" min="1" max="10" style="width:50px"> (the match length is the cap)</span></div>
  <div class="row">Physics <select id="sphys"><option value="">1000 Hz</option><option value="500">500 Hz (faster)</option><option value="200">200 Hz (fastest)</option></select>
@@ -234,10 +237,14 @@ function sAdd(){const k=$('spal').value; if(sb.props[k]){ssel=k; sDraw(); return
  for(const p of spots){if(!Object.values(sb.props).some(v=>Math.hypot(v[0]-p[0],v[1]-p[1])<0.5)){sb.props[k]=[p[0],p[1],0]; break;}} ssel=k; $('ssel').textContent=sLabel(k); sDraw(); sCheck();}
 function sRemove(){if(ssel&&sb.props[ssel]){delete sb.props[ssel]; ssel=null; $('ssel').textContent='–'; sDraw(); sCheck();}}
 function sClear(){sb.props={}; sDraw(); sCheck();} function sKick(){sb.ball=[0,0]; const K=TK?SF.tanks_start:SF.kickoff; sb.A=[...K.A]; sb.B=[...K.B]; sDraw(); sCheck();}
+const OPENERS=['PEEK_NEAR','PEEK_FAR','HOLD','PUSH_MID'];
+function tFill(){for(const id of ['topA','topB']){const e=document.getElementById(id); if(e&&!e.options.length) e.innerHTML=OPENERS.map(o=>`<option>${o}</option>`).join('');}} tFill(); document.addEventListener('DOMContentLoaded',tFill);
+function tOpenings(){const o={mode:$('topen').value}; if(o.mode==='locked'){o.A=$('topA').value;o.B=$('topB').value;} const sd=$('topseed').value; if(sd!=='') o.seed=+sd; return o;}
 async function sRandom(){const r=await api(TK?'/api/tanks_random':'/api/soccer_random',{seed:+$('sseed').value}); sb.props=r.props||{}; sDraw(); sCheck();}
 async function sCheck(){const r=await api(TK?'/api/tanks_check':'/api/soccer_check',{setup:sb}); const m=(r.messages||[]).map(x=>`<span class="${x.level==='error'?'err':'warn'}">${x.level==='warn'?'WARNING: ':''}${x.text}</span>`);
  if(!m.length) m.push('<span class="ok">setup OK</span>'); $('scheck').innerHTML=m.join(' · '); $('sstart').disabled=!r.ok;}
 async function sStart(){const a=app(); $('smsg').textContent='starting… (two crabs: the world takes ~40 s to build)';
+ if(TK) sb.openings=tOpenings(); else delete sb.openings;
  const r=await api('/api/start',{app:a.path,setup:sb,pushable:$('spush').checked,seed:+$('smseed').value,tmax:+$('stmax').value,speed:+$('sspeed').value,physics_hz:$('sphys').value?+$('sphys').value:null,live:$('slive').checked,goals_to_win:Math.max(1,Math.min(10,+$('sgoals').value||3)),hits_to_win:Math.max(1,Math.min(10,+$('thits').value||3)),bounce:$('tbounce').checked,aggression:{A:Math.max(0,Math.min(1,+$('saggA').value)),B:Math.max(0,Math.min(1,+$('saggB').value))}});
  if(!r.ok){$('smsg').innerHTML='<span class="err">'+(r.error||'failed')+'</span>';return;} $('smsg').textContent=''; curRun=r.run; showLive();}
 // ---------- run ----------
