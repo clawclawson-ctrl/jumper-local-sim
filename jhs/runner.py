@@ -152,31 +152,39 @@ def start_soccer(app, setup=None, seed=1, tmax=300.0, speed=1.0, live=True, live
 
 
 def start_tanks(app, setup=None, seed=1, tmax=300.0, speed=1.0, live=True, live_size=(1280, 720), physics_hz=None, pushable=True, hits_to_win=3, bounce=True):
-    """1v1 Crab Tanks (jhs/tanks/run.py) on its own arena map (maps/jumper-tanks-arena.map). setup = {A: [x, y, deg], B: [x, y, deg], props: {id: [x, y, deg]}}."""
+    """1v1 Crab Tanks (jhs/tanks/run.py) on the selected Combat arena. setup = {arena, A, B, props}."""
     from .soccer import field as SF
     from .tanks import arena as TA
+    from .tanks import field as TF
     info = inspect(app)
     if not info.get("ok"): raise ValueError(info.get("error"))
     if info["kind"] != "tanks": raise ValueError("not a crab tanks app")
-    setup = dict(setup or {}); setup.pop("ball", None); setup.setdefault("A", list(TA.START["A"])); setup.setdefault("B", list(TA.START["B"]))
+    setup = dict(setup or {}); setup.pop("ball", None)
+    aid = str(setup.get("arena") or TF.DEFAULT)
+    if aid not in TF.ARENAS: raise ValueError(f"unknown arena {aid}")
+    setup["arena"] = aid
+    spec = TF.ARENAS[aid]
+    setup.setdefault("A", list(spec["start"]["A"])); setup.setdefault("B", list(spec["start"]["B"]))
     setup["props"] = {k: v for k, v in (setup.get("props") or {}).items() if k in SF.PROPS}
     errs = [m for l, m in TA.validate(setup) if l == "error"]
     if errs: raise ValueError("invalid setup: " + "; ".join(errs))
     rd = new_run_dir("tanks")
     (rd / "setup.json").write_text(json.dumps(setup, indent=1))
+    arena_map = rd / "arena.map"
+    TF.build(ROOT / "maps" / "jumper-hide-seek-v7.map", arena_map, pieces=spec["pieces"], start=spec["start"], label=spec["label"])
     env = base_env()
     env.update(VS_SEED=str(int(seed)), VS_OUT=str(rd), VS_TMAX=str(float(tmax)), VS_SAVEVIS="1", JHS_SPEED=str(float(speed)), TK_LIVE="1",
                JHS_LIVE="1" if live else "0", JHS_LIVE_DIR=str(rd / "live"), JHS_STOP=str(rd / "STOP"), TK_SETUP=str(rd / "setup.json"),
                TK_PUSHABLE="1" if pushable else "0", TK_HITS=str(max(1, min(10, int(hits_to_win)))), TK_BOUNCE="1" if bounce else "0",
-               JHS_LIVE_W=str(live_size[0]), JHS_LIVE_H=str(live_size[1]))
+               TK_ARENA=aid, JHS_LIVE_W=str(live_size[0]), JHS_LIVE_H=str(live_size[1]))
     from .pushable import variant
-    scene = variant(MAPS["tanks"], rd / "scene.map", pushable=bool(pushable), moves=setup["props"] or None)
+    scene = variant(arena_map, rd / "scene.map", pushable=bool(pushable), moves=setup["props"] or None)
     app_for_play = Path(info["path"])
     if os.environ.get("JHS_FORCE_LOCAL_CONTROLLER") == "1":
         app_for_play = strip_controller(app_for_play, rd / "app_local_controller.app")
     (rd / "local_run.json").write_text(json.dumps(dict(app=str(app_for_play), app_original=info["path"], scene=str(scene), kind="tanks",
                                                        pushable=bool(pushable), setup=setup, seed=seed, tmax=tmax, hits_to_win=int(hits_to_win), bounce=bool(bounce),
-                                                       physics_hz=physics_hz or 1000, speed=speed, started=time.strftime("%Y-%m-%d %H:%M:%S"), info=info), indent=1))
+                                                       arena=aid, physics_hz=physics_hz or 1000, speed=speed, started=time.strftime("%Y-%m-%d %H:%M:%S"), info=info), indent=1))
     cmd = [sys.executable, str(PKG / "tanks" / "run.py"), "--app", str(app_for_play), "--scene", str(scene),
            "--backend", "native", "--device", "cpu", "--headless", "--steps", "999999999"]
     if physics_hz: cmd += ["--physics-hz", str(int(physics_hz))]

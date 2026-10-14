@@ -356,7 +356,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                       f"shots={fired} falls={falls}", flush=True)
     finally:
         truth.close()
-        res = dict(kind="tanks", label="SIM-ONLY VISION CONCEPT", seed=SEED, openings=dict(mode=OPEN_CFG["mode"], seed=OPEN_SEED, rounds=OPEN_LOG), tmax=TMAX, setup=dict(A=START["A"], B=START["B"], props=SETUP.get("props", {})),
+        res = dict(kind="tanks", label="SIM-ONLY VISION CONCEPT", seed=SEED, arena=F.ARENA, openings=dict(mode=OPEN_CFG["mode"], seed=OPEN_SEED, rounds=OPEN_LOG), tmax=TMAX, setup=dict(arena=F.ARENA, A=START["A"], B=START["B"], props=SETUP.get("props", {})),
                    bounce=BOUNCE, hits_to_win=HITS_TO_WIN, t_end=round(step * dt, 2), stopped=stopped,
                    score={"RED": score["A"], "BLUE": score["B"]}, hits=hits, shots_fired={F.TEAM[k]: v for k, v in fired.items()},
                    shot_ends=shot_end, close_misses_survived={F.TEAM[k]: v for k, v in dodges_ok.items()},

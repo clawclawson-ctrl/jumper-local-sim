@@ -82,15 +82,19 @@ def jittered_start(team, jit, base=None):
 
 
 def opener_waypoints(team, opener, side):
-    """team-relative waypoints (x mirrored for BLUE): list of (x, y, face_deg or None). 'side' is the y side of the near bracket end."""
+    """team-relative waypoints (x mirrored for BLUE): list of (x, y, face_deg or None).
+    The points come from the active arena. A point inside a wall drops the whole opener, and the brain searches instead."""
+    from jhs.tanks import field as F
     dx = -1.0 if team == "A" else 1.0; fwd = 0.0 if team == "A" else 180.0
-    W = lambda x, y, f: (dx * x, y, f)
-    if opener == "PEEK_NEAR" or opener == "PEEK_FAR":
-        s = side if opener == "PEEK_NEAR" else -side
-        return [W(2.80, 1.12 * s, None), W(1.85, 1.20 * s, fwd)]
-    if opener == "HOLD":
-        return [W(2.85, 0.42 * side, math.degrees(math.atan2(1.0 * side, -dx * 0.6)))]
-    return [W(2.80, 1.12 * side, None), W(1.85, 1.20 * side, None), W(0.55, 0.0, fwd)]   # PUSH_MID: out round the end, into the mid gap
+    out = []
+    for x, y, kind in F.opener_points(opener, side):
+        px, py = dx * x, y
+        if kind == "fwd": face = fwd
+        elif kind == "hold": face = math.degrees(math.atan2(1.0 * side, -dx * 0.6))
+        else: face = None
+        out.append((px, py, face))
+    if any(wall_clear(px, py) < INFL for px, py, _ in out): return []
+    return out
 
 
 def _seg_blocked(a, b, n=8):
@@ -564,6 +568,13 @@ class OppBelief:
     VMAX = 0.35                      # m/s: the crab's top walking speed
     BEL_R, BEL_HFOV = 3.5, 1.6       # range / full view angle within which a crab in view would be detected
     FREE = INSIDE & (np.vectorize(lambda x, y: __import__("jhs.tanks.field", fromlist=["wall_clear"]).wall_clear(x, y))(CX, CY) >= 0.12)
+
+    @classmethod
+    def refresh_free(cls):
+        """floor mask for the active arena (call after jhs.tanks.explore.refresh)."""
+        import jhs.tanks.explore as E
+        from jhs.tanks.field import wall_clear as _wc
+        cls.FREE = E.INSIDE & (np.vectorize(_wc)(E.CX, E.CY) >= 0.12)
 
     def __init__(self, at=None):
         self.p = np.zeros((NX, NY)); self.reset(at); self.acc = 0.0

@@ -17,10 +17,16 @@ INFL = CRAB_R + 0.05
 NX, NY = int(round(2 * FX / CELL)), int(round(2 * FY / CELL))
 XS = -FX + CELL * (np.arange(NX) + 0.5); YS = -FY + CELL * (np.arange(NY) + 0.5)
 CX, CY = np.meshgrid(XS, YS, indexing="ij")                    # cell centres [NX, NY]
-INSIDE = np.vectorize(wall_clear)(CX, CY) >= 0.0
-WALLBLOCK = np.vectorize(wall_clear)(CX, CY) < INFL             # map knowledge: too close to a wall / goal frame for a crab
+def refresh():
+    """Rebuild the wall grids for the active arena (jhs.tanks.field.ARENA). Import builds them once for the default maze."""
+    global INSIDE, WALLBLOCK, PIECEBLOCK
+    INSIDE = np.vectorize(wall_clear)(CX, CY) >= 0.0
+    WALLBLOCK = np.vectorize(wall_clear)(CX, CY) < INFL
+    PIECEBLOCK = np.vectorize(piece_dist)(CX, CY) < 0.05
+
+
+refresh()
 HFOV, VIEW_R, SEEN_DECAY, OBST_FORGET = 1.0, 2.6, 25.0, 30.0   # camera half-angle 0.5 rad; floor counts unseen again after 25 s
-PIECEBLOCK = np.vectorize(piece_dist)(CX, CY) < 0.05             # fixed layout walls block the view (map knowledge)
 PUSH_COST = 6.0                                                # extra cost per cell of a sensed pushable obstacle
 
 
