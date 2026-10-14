@@ -3,11 +3,11 @@ walls, the same placeable official obstacles); the goal mouths count as wall for
 slow like Atari Combat missiles so a crab can see one coming and step out of its path. Pure functions, unit-tested."""
 from __future__ import annotations
 import math
-from jhs.soccer import field as F
+from jhs.tanks import field as F
 
 FX, FY, CORNER_R, PROPS, TEAM = F.FX, F.FY, F.CORNER_R, F.PROPS, F.TEAM
-START = {"A": (-1.7, 0.0, 0.0), "B": (1.7, 0.0, 180.0)}
-BALL_PARK = (-3.6, 0.2)            # the field's football waits outside the arena
+START = F.START                    # behind each '[' / ']' bracket, facing the centre
+BALL_PARK = F.BALL_PARK            # the map's football waits outside the arena
 SHOT_SPEED = 0.6                   # m/s (the crab walks ~0.3 m/s, so a 2 m shot gives ~3 s to step aside)
 SHOT_R = 0.03; SHOT_Z = 0.15       # drawn sphere radius; flight height (= the turret barrel height)
 SHOT_LIFE = 6.0; MAX_BOUNCES = 2
@@ -19,14 +19,11 @@ MUZZLE = 0.22
 
 
 def validate(setup, strict=False):
-    """soccer field validation without the ball."""
-    s = dict(setup); s["ball"] = [0.0, 0.0]
-    s.setdefault("A", list(START["A"])); s.setdefault("B", list(START["B"]))
-    return [(l, m) for l, m in F.validate(s, strict) if "ball" not in m and "goal mouth" not in m and "centre spot" not in m and "kickoff spot" not in m]
+    return F.validate(setup, strict)
 
 
 def random_layout(seed, n=None):
-    return F.random_layout(seed, n if n is not None else 4)
+    return F.random_layout(seed, n)
 
 
 def reflect(x, y, vx, vy, r=SHOT_R):
@@ -41,6 +38,12 @@ def reflect(x, y, vx, vy, r=SHOT_R):
         if d > 0: vx, vy = vx - 2 * d * nx, vy - 2 * d * ny
         ox, oy = math.copysign(FX - CORNER_R, x), math.copysign(FY - CORNER_R, y)
         x, y = ox + nx * (CORNER_R - r - 1e-3), oy + ny * (CORNER_R - r - 1e-3); b = True
+    for cx, cy, hx, hy in F.PIECES:      # the fixed layout walls bounce shots too (axis-aligned boxes)
+        px, py = hx + r - abs(x - cx), hy + r - abs(y - cy)
+        if px > 0 and py > 0:
+            if px < py: x = cx + math.copysign(hx + r + 1e-3, x - cx); vx = -vx if (x - cx) * vx < 0 else vx
+            else: y = cy + math.copysign(hy + r + 1e-3, y - cy); vy = -vy if (y - cy) * vy < 0 else vy
+            b = True
     return x, y, vx, vy, b
 
 
@@ -99,18 +102,19 @@ def unit():
     out = []
     x, y, vx, vy, b = reflect(FX + 0.05, 0.0, 0.6, 0.0); assert b and vx < 0 and x < FX
     x, y, vx, vy, b = reflect(FX - 0.05, FY - 0.05, 0.4, 0.4); assert b and vx < 0 and vy < 0
-    out.append("walls + rounded corners reflect")
+    x, y, vx, vy, b = reflect(-1.30 + 0.18, 0.0, -0.6, 0.0); assert b and vx > 0 and x > -1.30 + 0.19
+    out.append("walls + rounded corners + fixed layout pieces reflect")
     sh = [dict(owner="A", x=0.0, y=0.0, vx=SHOT_SPEED, vy=0.0, age=0.0, bounces=0)]
     ev = []
-    for _ in range(100): ev += step_shots(sh, 0.05, {}, {"A": (-1, 0), "B": (1.5, 0)})
+    for _ in range(100): ev += step_shots(sh, 0.05, {}, {"A": (-1, 0), "B": (0.9, 0)})
     assert ev and ev[0][0] == "hit" and ev[0][2] == "B", ev; out.append("shot hits the other crab, never its owner")
     sh = [dict(owner="A", x=0.0, y=0.0, vx=SHOT_SPEED, vy=0.0, age=0.0, bounces=0)]
     ev = []
-    for _ in range(100): ev += step_shots(sh, 0.05, {"crateNE": (0.8, 0.0, 0.0)}, {"A": (-1, 0), "B": (1.5, 0)})
+    for _ in range(100): ev += step_shots(sh, 0.05, {"crateNE": (0.6, 0.0, 0.0)}, {"A": (-1, 0), "B": (0.9, 0)})
     assert ev[0][0] == "cover"; out.append("cover blocks shots")
-    sh = [dict(owner="A", x=2.0, y=1.0, vx=SHOT_SPEED, vy=0.0, age=0.0, bounces=0)]
+    sh = [dict(owner="A", x=FX - 0.4, y=1.0, vx=SHOT_SPEED, vy=0.0, age=0.0, bounces=0)]
     ev = step_shots(sh, 1.0, {}, {}, bounce=False); assert ev and ev[0][0] == "wall"
-    sh = [dict(owner="A", x=2.0, y=1.0, vx=SHOT_SPEED, vy=0.0, age=0.0, bounces=0)]
+    sh = [dict(owner="A", x=FX - 0.4, y=1.0, vx=SHOT_SPEED, vy=0.0, age=0.0, bounces=0)]
     ev = step_shots(sh, 1.0, {}, {}, bounce=True); assert not ev and sh[0]["vx"] < 0; out.append("bounce setting on/off")
     a, t = lead_angle((0, 0), (2, 0), (0, 0.3)); assert t and a > 0.1; out.append(f"lead {math.degrees(a):.0f} deg for a crossing target")
     th = threat((2, 0.1), (0, 0), (SHOT_SPEED, 0)); assert th and th[1] < 0.15

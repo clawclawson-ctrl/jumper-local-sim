@@ -89,6 +89,10 @@ class H(BaseHTTPRequestHandler):
                 from .soccer import field as SF
                 return self._send(200, dict(FX=SF.FX, FY=SF.FY, GW=SF.GW, GD=SF.GD, CENTRE_R=SF.CENTRE_R, BALL_R=SF.BALL_R, CORNER_R=SF.CORNER_R, kickoff=SF.KICKOFF, tanks_start=__import__("jhs.tanks.arena", fromlist=["START"]).START,
                                             props={k: dict(label=v[1], hx=v[2], hy=v[3]) for k, v in SF.PROPS.items()}))
+            if u.path == "/api/tanks_field":
+                from .tanks import field as TF
+                return self._send(200, dict(FX=TF.FX, FY=TF.FY, GW=0, GD=0, CENTRE_R=0, BALL_R=TF.BALL_R, CORNER_R=TF.CORNER_R, kickoff=TF.START, tanks_start=TF.START,
+                                            pieces=TF.PIECES, tk=True, props={k: dict(label=v[1], hx=v[2], hy=v[3]) for k, v in TF.PROPS.items()}))
             if u.path == "/api/runs":
                 rs = sorted([d for d in runner.RUNS.glob("2*") if d.is_dir()], reverse=True)[:30]
                 return self._send(200, [dict(runner.run_state(d), running=(STATE["procs"].get(d.name) is not None and STATE["procs"][d.name].poll() is None)) for d in rs])

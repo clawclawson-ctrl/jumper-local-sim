@@ -5,7 +5,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from jhs import PKG
 from jhs.overlay import tof_image
-from jhs.soccer import field as F
+from jhs.tanks import field as F
 from . import arena as A
 
 TC = {"A": (235, 60, 40), "B": (60, 110, 240)}
@@ -67,12 +67,23 @@ class TanksOverlay:
         d.rectangle([S(22), S(14), S(470), S(56)], fill=(150, 20, 20, 210)); d.text((S(34), S(20)), "SIM-ONLY VISION CONCEPT", font=self.f5, fill=(255, 255, 255))
         d.text((S(26), S(64)), "Jumper Crab Tanks 1v1 -- each crab sees only", font=self.f3, fill=(255, 255, 255))
         d.text((S(26), S(88)), "with its own sim camera + dToF + pose · slow Combat shots", font=self.f3, fill=(255, 255, 255))
-        MW = S(520); MH = int(MW * (2 * F.FY + 0.3) / (2 * F.FX + 1.0)); mx0 = W // 2 - MW // 2; my0 = H - MH - S(150)
-        d.rectangle([mx0 - S(10), my0 - S(34), mx0 + MW + S(10), my0 + MH + S(54)], fill=(0, 0, 0, 160))
-        d.text((mx0, my0 - S(30)), "top view: each crab's OWN belief · cyan = shots (SIM TRUTH)", font=self.f6, fill=(255, 255, 255))
-        def P(x, y): return mx0 + (x + F.FX + 0.5) / (2 * F.FX + 1.0) * MW, my0 + (F.FY + 0.15 - y) / (2 * F.FY + 0.3) * MH
-        d.rounded_rectangle([*P(-F.FX, F.FY), *P(F.FX, -F.FY)], radius=F.CORNER_R / (2 * F.FX + 1.0) * MW, fill=(48, 100, 50), outline=(230, 230, 210), width=max(1, S(2)))
-        d.line([P(0, F.FY), P(0, -F.FY)], fill=(230, 230, 210), width=1)
+        # top view: 65 % of the old bottom-centre panel, docked in the bottom-right corner above the sim clock (off the arena)
+        MW = S(340); MH = int(MW * (2 * F.FY + 0.3) / (2 * F.FX + 0.6)); mx0 = W - MW - S(26); my0 = H - MH - S(128)
+        d.rectangle([mx0 - S(8), my0 - S(26), mx0 + MW + S(8), my0 + MH + S(44)], fill=(0, 0, 0, 170))
+        d.text((mx0, my0 - S(23)), "top view: OWN beliefs · cyan = shots (SIM TRUTH)", font=self.f6, fill=(255, 255, 255))
+        def P(x, y): return mx0 + (x + F.FX + 0.3) / (2 * F.FX + 0.6) * MW, my0 + (F.FY + 0.15 - y) / (2 * F.FY + 0.3) * MH
+        d.rounded_rectangle([*P(-F.FX, F.FY), *P(F.FX, -F.FY)], radius=F.CORNER_R / (2 * F.FX + 0.6) * MW, fill=(107, 42, 20), outline=(220, 160, 60), width=max(1, S(2)))
+        # each crab's OWN opponent belief (where the other crab may be), as a heatmap in that crab's colour
+        for k in ("A", "B"):
+            B = (meta.get(k) or {}).get("belief")
+            if not B: continue
+            cw = 2 * F.FX / len(B); ch = 2 * F.FY / len(B[0])
+            for i, col in enumerate(B):
+                for j, v in enumerate(col):
+                    if v < 0.06: continue
+                    x0_, y0_ = -F.FX + i * cw, -F.FY + j * ch
+                    d.rectangle([*P(x0_, y0_ + ch), *P(x0_ + cw, y0_)], fill=TC[k] + (int(40 + 120 * v),))
+        for cx, cy, hx, hy in F.PIECES: d.rectangle([*P(cx - hx, cy + hy), *P(cx + hx, cy - hy)], fill=(220, 160, 60))
         for _k, Pp in (props or []):
             if max(abs(x) for x, _ in Pp) > F.FX + 0.3 or max(abs(y) for _, y in Pp) > F.FY + 0.3: continue
             d.polygon([P(x, y) for x, y in Pp], outline=(235, 235, 235), width=max(1, S(1.5)))
@@ -91,10 +102,10 @@ class TanksOverlay:
                 tw = m.get("turret_rad")
                 if tw is not None:
                     d.line([qx, qy, qx + S(22) * math.cos(-tw), qy + S(22) * math.sin(-tw)], fill=(255, 255, 255), width=max(1, S(2)))
-        d.text((mx0, my0 + MH + S(6)), "square = where that crab thinks the other is; white line = its turret", font=self.f6, fill=(230, 230, 230))
-        d.text((mx0, my0 + MH + S(26)), "cyan dots = projectiles (SIM TRUTH, display only); outlines = obstacles", font=self.f6, fill=(230, 230, 230))
+        d.text((mx0, my0 + MH + S(4)), "square = where it thinks the other is; white = turret", font=self.f6, fill=(230, 230, 230))
+        d.text((mx0, my0 + MH + S(22)), "heat = its belief where the other crab may be; orange = walls", font=self.f6, fill=(230, 230, 230))
         ref = meta.get("ref", "")
-        d.rectangle([S(22), H - S(66), S(1100), H - S(20)], fill=(0, 0, 0, 175))
+        d.rectangle([S(22), H - S(66), S(1060), H - S(20)], fill=(0, 0, 0, 175))
         d.text((S(34), H - S(58)), f"REFEREE (SIM TRUTH): {ref}", font=self.f2, fill=(200, 255, 200))
         clock = f"sim time t = {t:5.1f} s   ({speed_label})"; cw = int(d.textlength(clock, font=self.f2)) + S(28)
         d.rectangle([W - cw - S(14), H - S(66), W - S(14), H - S(20)], fill=(0, 0, 0, 175))
@@ -116,5 +127,5 @@ class BroadcastCam:
 
     def update(self, look_xy=None):
         if look_xy is not None: self.x += (0.35 * float(look_xy[0]) - self.x) * 0.05
-        self.cam.lookat[:] = [self.x, -0.35, 0.0]; self.cam.distance = 5.4; self.cam.azimuth = 90.0; self.cam.elevation = -48.0
+        self.cam.lookat[:] = [self.x, -0.55, 0.0]; self.cam.distance = 7.6; self.cam.azimuth = 90.0; self.cam.elevation = -52.0
         return self.cam

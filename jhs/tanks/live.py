@@ -50,7 +50,7 @@ class TanksHook:
             for k in ("A", "B"):
                 if (self.m.get(k) or {}).get("pose"): look = (self.m[k]["pose"][0], self.m[k]["pose"][1]); break
             self.rend.update_scene(self.rd, self.cam.update(look))
-            if self.draw_cb: self.draw_cb(self.mj, self.rend.scene)
+            if self.draw_cb: self.draw_cb(self.mj, self.rend.scene)   # turrets + shots with trails
             frame = Image.fromarray(self.rend.render())
             wall = time.time() - self.t0; rate = (t - self.sim0) / wall if wall > 1 else 0.0
             self.ov.draw(frame, self.m, self.img["A"], self.img["B"], self.tof["A"], self.tof["B"], t, self.tmax,

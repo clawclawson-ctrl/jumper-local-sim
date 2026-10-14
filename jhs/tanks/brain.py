@@ -6,13 +6,14 @@ import math, os
 import numpy as np
 from scipy import ndimage
 from jhs.soccer import vision
-from jhs.soccer.explore import Memory, CRAB_R, INFL, CELL, XS, YS, cell
+from jhs.tanks.explore import Memory, CRAB_R, INFL, CELL, XS, YS, CX, CY, NX, NY, INSIDE, cell
 from jhs.soccer.brain import wrap, fam_mask, colour_blobs, FAM, TEAMFAM, OTHER, WALK
-from jhs.soccer.field import FX, FY, wall_clear
+from jhs.tanks.field import FX, FY, wall_clear, wall_normal, piece_dist
 from . import arena as A
 
 FOV = math.radians(70)             # onboard camera half-width of view is ~35 deg each side; keep aim inside
 SCAN_MAX, SCAN_WATCH = 10.0, 8.0
+SHOT_HEAD_R = 0.045               # drawn projectile head radius (jhs/tanks/fx.py), known to the crabs as a game rule
 SHOT_LEAD = os.environ.get("TK_LEAD", "1") == "1"
 
 
@@ -26,30 +27,32 @@ def perceive(team, img, selfmask, cam_pos, cam_R, cam, tof, tof_pos, tof_R, tof_
     h, s, v = vision.hsv(img)
     m = (h >= 165) & (h <= 195) & (s >= 0.45) & (v >= 0.55)        # glowing cyan: no other cyan in the arena
     m &= ~selfmask; m[: img.shape[0] // 5, :] = False     # skip the sky strip
-    m = ndimage.binary_opening(m, iterations=1)
     lab, n = ndimage.label(m)
     for i, sl in enumerate(ndimage.find_objects(lab)):
         if sl is None: continue
         blob = lab[sl] == i + 1; npx = int(blob.sum())
-        if not (8 <= npx <= 900): continue
+        if not (4 <= npx <= 1500): continue
         ys, xs = np.nonzero(blob); ys = ys + sl[0].start; xs = xs + sl[1].start
         bw, bh = xs.max() - xs.min() + 1, ys.max() - ys.min() + 1
         if max(bw, bh) > 2.5 * min(bw, bh) or npx < 0.4 * bw * bh: continue      # round, filled
         uc, vc = int(np.median(xs)), int(np.median(ys))
         d = cam_R @ np.array([(uc + 0.5 - cam.W / 2) / cam.f, -(vc + 0.5 - cam.H / 2) / cam.f, -1.0])
         Dn = d / max(1e-6, np.linalg.norm(d))
-        # projectiles fly at SHOT_Z; intersect that plane
-        if abs(Dn[2]) < 1e-4: continue
-        t = (A.SHOT_Z - cam_pos[2]) / Dn[2]
-        if t <= 0.05 or t > 6.0: continue
+        # range from the head's known size (its vertical extent; the trail only stretches it sideways), which stays well
+        # conditioned far away, unlike intersecting a near-horizontal ray with the flight-height plane
+        t = (2 * SHOT_HEAD_R) * cam.f / max(1.0, float(bh)) * float(np.linalg.norm(d))
+        if t <= 0.05 or t > 7.5: continue
         g = cam_pos + t * Dn
         if abs(g[0]) > FX + 0.3 or abs(g[1]) > FY + 0.3: continue
         # reject the other crab's body (big colour blob nearby)
         if any(np.hypot(g[0] - o["xy"][0], g[1] - o["xy"][1]) < 0.25 for o in opp): continue
         shots.append(dict(xy=np.array([g[0], g[1]], float), rng=float(t),
                           bbox=(int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())), npx=npx))
+    keep = []                                  # head + trail: one shot (the largest blob of a group within 0.3 m)
+    for q in sorted(shots, key=lambda q: -q["npx"]):
+        if all(np.linalg.norm(q["xy"] - k_["xy"]) > 0.3 for k_ in keep): keep.append(q)
     obst = vision.tof_obstacles(tof, tof_pos, tof_R, tof_cam, rmax=0.7) if tof is not None else np.zeros((0, 3))
-    return dict(opp=opp, shots=shots, obst=obst)
+    return dict(opp=opp, shots=keep, obst=obst)
 
 
 class Brain:
@@ -67,13 +70,20 @@ class Brain:
         self.stuck_ref = None; self.scan_acc = 0.0; self.scan_prev = None; self.scan_t0 = t
         self.searching = False; self.exploring = False; self.exp_goal = None; self.exp_path = []; self.exp_t = -1e9
         self.wait_until = t + 0.6; self.obst = np.zeros((0, 3)); self.last_cmd = {}; self.wd = (t, np.zeros(2))
-        self.cover = None; self.stun_until = 0.0; self.ret_spot = None; self.own = None
+        self.cover = None; self.stun_until = 0.0; self.ret_spot = None; self.own = None; self.dodge_hold = -1e9; self.dodge_goal = None
+        opp_start = A.START["B" if self.team == "A" else "A"]           # rules / map knowledge: where the opponent starts
+        if not hasattr(self, "bel"): self.bel = OppBelief()
+        self.bel.reset(opp_start[:2] if kickoff else None, sigma=0.3); self.bel_t = t; self.sgoal = None; self.spath = []; self.splan_t = -1e9
 
     def observe(self, t, per, pose):
         self.t = t; self.obst = per["obst"]; x, y, yaw = pose
         self.mem.t = t
         self.mem.add_obstacles(per["obst"], None, (per["opp"][0]["xy"] if per["opp"] else self.opp if self.opp is not None and t - self.opp_t < 1.5 else None))
         self.mem.mark_view(pose)
+        # opponent belief: spread, then clear what I can see (or reset to a sighting)
+        self.bel.spread(max(0.0, t - self.bel_t)); self.bel_t = t
+        if per["opp"]: self.bel.reset(min(per["opp"], key=lambda d: d["rng"])["xy"], sigma=0.12)
+        else: self.bel.seen_empty(self.mem.visible(pose, OppBelief.BEL_R, OppBelief.BEL_HFOV))
         if per["opp"]:
             d = min(per["opp"], key=lambda d: d["rng"]); z = np.asarray(d["xy"], float)
             if self.opp is not None and 0.05 < t - self.opp_t < 1.5:
@@ -111,6 +121,8 @@ class Brain:
         self.state = "return"; self.sub = "returning to start"; self.t = t; self.stuck_ref = None; self.hold = None
 
     def return_cmd(self, pose):
+        dcmd = self._dodge(pose)                 # a seen shot outranks walking back too
+        if dcmd is not None: return dcmd
         x, y, yaw = pose; me = np.array([x, y]); sx, sy, sh = self.ret_spot; goal = np.array([sx, sy])
         dg = float(np.linalg.norm(goal - me))
         if dg < 0.12:
@@ -150,8 +162,8 @@ class Brain:
             if dl @ np.array([vx, vy]) <= 0: continue
             rep -= dl / n * (r - n) / r
         wc = wall_clear(x, y)
-        if wc < INFL:
-            gx, gy = -x, -y; g = np.array([c * gx + s * gy, -s * gx + c * gy]); g /= max(1e-6, np.linalg.norm(g))
+        if wc < INFL:      # outer wall or a fixed layout piece (map knowledge): push away along the wall normal
+            gx, gy = wall_normal(x, y); g = np.array([c * gx + s * gy, -s * gx + c * gy]); g /= max(1e-6, np.linalg.norm(g))
             if g @ np.array([vx, vy]) < 0: rep += g * (INFL - wc) / INFL
         if not np.any(rep): return vx, vy
         return vx + 0.9 * rep[0], vy + 0.9 * rep[1]
@@ -190,6 +202,52 @@ class Brain:
         self.state = "explore"; self.sub = f"EXPLORE: next best view ({self.exp_goal[0]:.1f}, {self.exp_goal[1]:.1f})"
         return self._follow(pose, self.exp_path, self.exp_goal, "exploring")
 
+    DODGE_R = HIT_R_ = 0.30          # body + leg clearance a seen shot must miss by
+
+    def _threat(self, me, horizon=3.5, dt=0.05):
+        """the most urgent seen shot whose predicted path (wall / fixed-wall bounces included, arena rules) passes within DODGE_R:
+        -> (time, miss, velocity at closest approach, position at closest approach) or None."""
+        best = None
+        for s in self.shots:
+            if float(np.linalg.norm(s["v"])) < 0.1: continue
+            x, y = float(s["xy"][0]), float(s["xy"][1]); vx, vy = float(s["v"][0]), float(s["v"][1]); bmin = (9.0, 0.0, (vx, vy), (x, y))
+            for i in range(int(horizon / dt)):
+                x, y, vx, vy, _b = A.reflect(x + vx * dt, y + vy * dt, vx, vy)
+                d = math.hypot(me[0] - x, me[1] - y)
+                if d < bmin[0]: bmin = (d, (i + 1) * dt, (vx, vy), (x, y))
+            if bmin[0] < self.DODGE_R and (best is None or bmin[1] < best[0]):
+                best = (bmin[1], bmin[0], np.array(bmin[2]), np.array(bmin[3]))
+        return best
+
+    def _dodge(self, pose):
+        """quickest sidestep out of a seen shot's path keeping INFL from walls (or duck behind cover if nearer); held until it passed."""
+        x, y, yaw = pose; me = np.array([x, y]); t = self.t
+        th = self._threat(me)
+        if th is None:
+            if t < self.dodge_hold and self.dodge_goal is not None:
+                self.state = "dodge"; self.sub = "DODGE: holding until the shot has passed"
+                return self._drive(pose, self.dodge_goal, face_yaw=yaw, speed=0.55)
+            self.dodge_goal = None; return None
+        tt, miss, v, pc = th
+        self.dodge_hold = t + tt + 0.3
+        side = np.array([-v[1], v[0]]); side /= max(1e-6, np.linalg.norm(side))
+        off = me - pc; pref = 1.0 if off @ side >= 0 else -1.0       # the side I am already on is the short way out
+        best, bc = None, 1e9
+        for sg in (pref, -pref):
+            need = self.DODGE_R + 0.12 + (miss if sg == pref else -miss)
+            g = me + side * sg * max(0.25, need)
+            if wall_clear(*g) < INFL or self.mem.occ()[cell(g)]: continue
+            cost = float(np.linalg.norm(g - me))
+            if cost < bc: best, bc = g, cost
+        cover = self._cover_spot(me, pc)
+        if cover is not None and float(np.linalg.norm(cover - me)) < bc: best, bc = np.asarray(cover, float), float(np.linalg.norm(cover - me))
+        if best is None: best = me + side * pref * 0.45
+        if self.dodge_goal is None or self.counts.get("_dodge_t", -1) != round(t - tt, 0):
+            self.counts["dodges"] += 1
+        self.dodge_goal = np.asarray(best, float)
+        self.state = "dodge"; self.sub = f"DODGE: shot in {tt:.1f} s, stepping {bc:.2f} m"
+        return self._drive(pose, self.dodge_goal, face_yaw=yaw, speed=0.55)       # strafe: no turning first
+
     def _cover_spot(self, me, threat_from):
         """a free cell behind a sensed obstacle, on the far side from the threat (own dToF memory only)."""
         occ = self.mem.occ(); best, bs = None, -1e9
@@ -214,6 +272,16 @@ class Brain:
         self.turret = wrap(self.turret + step)
         return self.turret
 
+    def shot_clear(self, a, b):
+        """a shot from a to b passes no fixed wall (map knowledge, raw geometry) and no sensed obstacle point mid-way."""
+        a, b = np.asarray(a, float), np.asarray(b, float); L = float(np.linalg.norm(b - a))
+        pts = self.obst[::3, :2] if len(self.obst) else np.zeros((0, 2))
+        for f in np.linspace(0, 1, max(2, int(L / 0.05))):
+            p = a + (b - a) * f
+            if piece_dist(*p) < 0.05: return False
+            if 0.45 < f * L < L - 0.45 and len(pts) and float(np.min(np.linalg.norm(pts - p, axis=1))) < 0.1: return False
+        return True
+
     def fire_ready(self, pose, aim):
         """True when cooldown done, no own shot in flight, and the turret is close enough to aim."""
         if self.own_in_flight or self.t - self.last_fire < A.COOLDOWN: return False
@@ -224,6 +292,8 @@ class Brain:
         x, y, yaw = pose; me = np.array([x, y]); t = self.t
         if t < self.wait_until: self.state, self.sub = "kickoff", "ready"; return {}, None
         if t < self.stun_until: self.state, self.sub = "stunned", "STUNNED"; return {}, None
+        dcmd = self._dodge(pose)                 # evasion overrides everything (incl. a stuck back-off in progress)
+        if dcmd is not None: self.hold = None; self.stuck_ref = None; return dcmd, None
         if self.hold is not None:
             if t < self.hold_until: return dict(self.hold), None
             self.hold = None
@@ -238,21 +308,9 @@ class Brain:
 
     def _decide(self, pose):
         x, y, yaw = pose; me = np.array([x, y]); t = self.t; fire = None
-        # ---- dodge first ----
-        dodge = None
-        for s in self.shots:
-            th = A.threat(me, s["xy"], s["v"], horizon=3.5)
-            if th is None or th[1] > HIT_R + 0.12: continue
-            tt, miss, off = th
-            # step perpendicular to the shot, away from its path
-            side = np.array([-s["v"][1], s["v"][0]]); side /= max(1e-6, np.linalg.norm(side))
-            if off[0] * side[0] + off[1] * side[1] < 0: side = -side
-            dodge = me + side * 0.55
-            self.counts["dodges"] += 1; break
-        if dodge is not None:
-            self.state = "dodge"; self.sub = "DODGE: stepping out of the shot"
-            return self._drive(pose, dodge, speed=0.55), None
-
+        # ---- DODGE (highest priority, above fire / hunt / cover / search / walk-back) ----
+        dcmd = self._dodge(pose)
+        if dcmd is not None: return dcmd, None
         # ---- hunt / cover / search ----
         have_opp = self.opp is not None and t - self.opp_t < 2.5
         if have_opp:
@@ -274,36 +332,92 @@ class Brain:
             # aim + fire
             aim, lead_t = A.lead_angle(me, self.opp, self.opp_v) if SHOT_LEAD else (math.atan2(*(self.opp - me)[::-1]), None)
             self._aim(pose, aim)
-            if self.fire_ready(pose, aim) and self.mem.clear_line(me, self.opp):
+            if self.fire_ready(pose, aim) and self.shot_clear(me, self.opp):
                 fire = dict(yaw=self.turret, lead=lead_t); self.last_fire = t; self.own_in_flight = True; self.counts["shots"] += 1
                 self.own = dict(x=x + A.MUZZLE * math.cos(self.turret), y=y + A.MUZZLE * math.sin(self.turret),
                                 vx=A.SHOT_SPEED * math.cos(self.turret), vy=A.SHOT_SPEED * math.sin(self.turret), t=t)
                 self.sub += " · FIRE"
             return cmd, fire
 
-        # ---- search / explore (opponent not seen) ----
-        if not self.searching and not self.exploring:
-            self.searching = True; self.scan_acc = 0.0; self.scan_prev = yaw; self.scan_t0 = t
-        if self.searching:
-            if self.scan_prev is not None: self.scan_acc += abs(wrap(yaw - self.scan_prev))
-            self.scan_prev = yaw
-            moved = float(np.linalg.norm(me - self.wd[1])) if self.wd else 0.0
-            if self.scan_acc > 2 * math.pi or t - self.scan_t0 > SCAN_MAX or (t - self.wd[0] > SCAN_WATCH and moved < 0.3):
-                self.searching = False; self.exploring = True; self.exp_goal = None; self.wd = (t, me.copy())
-            else:
-                self.counts["searches"] += 1; self.state = "search"; self.sub = f"scan: looking for the opponent ({math.degrees(self.scan_acc):.0f} deg)"
-                return {"rx": 0.62}, None
-        return self._explore(pose), None
+        # ---- search (opponent not seen): go to and look at the likeliest spot of my opponent belief ----
+        return self._search(pose), None
 
+    def _search(self, pose):
+        x, y, yaw = pose; me = np.array([x, y]); t = self.t
+        g, conf = self.bel.peak(me, sign=self.dirx)
+        if self.sgoal is None or t - self.splan_t > 2.0 or np.linalg.norm(g - self.sgoal) > 0.5:
+            self.sgoal = g; self.splan_t = t
+            self.spath = self.mem.plan(me, g, self.pushable, self._opp_block, sign=self.dirx) or [g]
+            self.counts["explores"] += 1
+        self._aim(pose, math.atan2(g[1] - y, g[0] - x))             # turret toward the likeliest spot
+        dg = float(np.linalg.norm(g - me)); self.counts["searches"] += 1
+        if dg < 0.6:                                                   # close: just face it (my view clears it, the peak moves on)
+            self.state = "search"; self.sub = f"SEARCH: looking at the likeliest spot ({conf:.0%})"
+            return self._drive(pose, me, face_yaw=math.atan2(g[1] - y, g[0] - x))
+        self.state = "search"; self.sub = f"SEARCH: belief peak ({g[0]:.1f}, {g[1]:.1f}) {dg:.1f} m"
+        return self._follow(pose, self.spath, g, "searching")
 
 HIT_R = A.HIT_R
+
+
+_CROSS = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], bool)
+
+
+class OppBelief:
+    """Where the opponent can be (own vision only). p over the arena grid, sums to 1. Seen-and-empty floor drops to ~0, floor hidden
+    behind walls / obstacles keeps its value, and every tick the belief spreads at the opponent's top walking speed (so it regrows from
+    the last sighting and from the edges of the unseen region). A sighting resets it to that point. Mirror-symmetric (point-reflection
+    tie-break for the peak). SIM-ONLY VISION CONCEPT."""
+    VMAX = 0.35                      # m/s: the crab's top walking speed
+    BEL_R, BEL_HFOV = 3.5, 1.6       # range / full view angle within which a crab in view would be detected
+    FREE = INSIDE & (np.vectorize(lambda x, y: __import__("jhs.tanks.field", fromlist=["wall_clear"]).wall_clear(x, y))(CX, CY) >= 0.12)
+
+    def __init__(self, at=None):
+        self.p = np.zeros((NX, NY)); self.reset(at); self.acc = 0.0
+
+    def reset(self, at=None, sigma=0.15):
+        if at is None: self.p = self.FREE.astype(float)
+        else: self.p = np.exp(-((CX - at[0]) ** 2 + (CY - at[1]) ** 2) / (2 * sigma ** 2)) * self.FREE
+        self._norm()
+
+    def _norm(self):
+        s = float(self.p.sum())
+        if s < 1e-9: self.p = self.FREE.astype(float); s = float(self.p.sum())
+        self.p /= s
+
+    def spread(self, dt):
+        """the opponent walks at most VMAX: the belief front moves one cell per CELL / VMAX s (a grey dilation, so growth is
+        linear in time from the last sighting and from the edges of the unseen region, not diffusive)."""
+        self.acc += dt; n = int(self.acc * self.VMAX / CELL)
+        if n < 1: return
+        self.acc -= n * CELL / self.VMAX
+        for _ in range(min(n, 20)):
+            self.p = np.maximum(self.p, 0.9 * ndimage.maximum_filter(self.p, footprint=_CROSS, mode="constant")) * self.FREE
+        self._norm()
+
+    def seen_empty(self, vis):
+        self.p[vis] *= 0.02; self._norm()
+
+    def peak(self, me, sign=1, dist_w=0.15):
+        """likeliest spot, smoothed, slightly preferring near ones; ties broken team-relative (mirror-symmetric)."""
+        sm = ndimage.gaussian_filter(self.p, 2.0, mode="constant")
+        sc = sm / max(1e-12, sm.max()) - dist_w * np.hypot(CX - me[0], CY - me[1]) / (2 * FX)
+        sc = np.where(self.FREE, sc, -1e9)
+        if sign < 0: i, j = np.unravel_index(np.argmax(sc[::-1, ::-1]), sc.shape); i, j = NX - 1 - i, NY - 1 - j
+        else: i, j = np.unravel_index(np.argmax(sc), sc.shape)
+        return np.array([CX[i, j], CY[i, j]]), float(sm[i, j] / max(1e-12, sm.max()))
+
+    def coarse(self, n=4):
+        """downsampled heat (0..1) for the overlay minimap."""
+        h = self.p[: NX // n * n, : NY // n * n].reshape(NX // n, n, NY // n, n).sum(axis=(1, 3))
+        return np.round(h / max(1e-12, h.max()), 2)
 
 
 def unit():
     out = []
     b = Brain("A", np.random.default_rng(1))
     # lead + fire when the opponent is in view, clear LOS
-    b.reset(True, 1.0); b.opp = np.array([1.5, 0.0]); b.opp_t = 1.0; b.opp_v = np.array([0.0, 0.3]); b.t = 2.0; b.wait_until = 0
+    b.reset(True, 1.0); b.opp = np.array([0.95, 0.0]); b.opp_t = 1.0; b.opp_v = np.array([0.0, 0.3]); b.t = 2.0; b.wait_until = 0
     b.turret = 0.0; b.last_fire = -10
     # seed a clear memory so clear_line passes
     cmd, fire = b._decide((0.0, 0.0, 0.0))
@@ -314,18 +428,51 @@ def unit():
         b.t = 2.0 + 0.1 * i; cmd, fire = b._decide((0.0, 0.0, 0.0))
         if fire: fired = True; break
     assert fired, "should fire"; out.append("fires with a lead angle")
-    # dodge: a shot aimed at me
-    b.shots = [dict(xy=np.array([-1.0, 0.0]), v=np.array([A.SHOT_SPEED, 0.0]), t=b.t, rng=1.0, bbox=(0, 0, 1, 1))]
-    cmd, fire = b._decide((0.5, 0.0, 0.0)); assert b.state == "dodge", b.state; out.append("dodges an incoming shot")
-    # bounded scan then explore (no spinning forever)
+    # dodge overrides firing and hunting: opponent in view, turret on target, cooldown ready -- and a shot coming at me
+    b.reset(True, 1.0); b.wait_until = 0; b.t = 3.0; b.opp = np.array([0.95, 0.0]); b.opp_t = 3.0; b.turret = 0.0; b.last_fire = -10
+    b.shots = [dict(xy=np.array([0.9, 0.4]), v=np.array([-A.SHOT_SPEED, -0.25]), t=b.t, rng=1.0, bbox=(0, 0, 1, 1))]
+    cmd, fire = b.decide((0.0, 0.0, 0.0)); assert b.state == "dodge" and fire is None, (b.state, fire)
+    assert abs(cmd.get("lx", 0)) + abs(cmd.get("ly", 0)) > 0.1; out.append("dodge overrides fire + hunt (strafes, no shot)")
+    # holds until the shot has passed, then resumes
+    b.shots = []; b.t = 3.2; b.decide((0.0, 0.3, 0.0)); assert b.state == "dodge"
+    b.t = 3.0 + 6.0; b.decide((0.0, 0.3, 0.0)); assert b.state != "dodge", b.state; out.append("dodge held until the shot passed, then resumes")
+    # bounce path: a shot heading AWAY from me toward the top wall, which bounces back down onto me
+    bb_ = Brain("A"); bb_.reset(True, 0.0); bb_.wait_until = 0; bb_.t = 1.0
+    bb_.shots = [dict(xy=np.array([1.6, 1.6]), v=np.array([0.0, A.SHOT_SPEED]), t=1.0, rng=1.0, bbox=(0, 0, 1, 1))]
+    assert bb_._threat(np.array([1.6, 0.9])) is not None; bb_.decide((1.6, 0.9, 0.0)); assert bb_.state == "dodge", bb_.state
+    assert bb_._threat(np.array([2.6, 0.9])) is None
+    bb_.shots = [dict(xy=np.array([0.7, 1.6]), v=np.array([0.0, A.SHOT_SPEED]), t=1.0, rng=1.0, bbox=(0, 0, 1, 1))]
+    assert bb_._threat(np.array([0.7, 0.9])) is None      # the same bounce stopped by the L bracket in between: no dodge needed
+    out.append("bounce-path threat (off the top wall) triggers a dodge; one blocked by an L bracket does not")
+    bb_.shots = [dict(xy=np.array([1.6, 1.6]), v=np.array([0.0, A.SHOT_SPEED]), t=1.0, rng=1.0, bbox=(0, 0, 1, 1))]
+    # walk-back: a seen shot interrupts it
+    bb_.begin_return((-3.0, 0.0, 0.0), 1.0); c_ = bb_.return_cmd((0.6, 0.9, 0.0)); assert bb_.state == "dodge"; out.append("dodge overrides the walk-back")
+    # belief: seen-empty area cleared, regrows behind a wall, search heads for it
+    bl = OppBelief(); bl.reset(None); m0 = Memory()
+    vis = m0.visible((-0.6, 0.0, 0.0), OppBelief.BEL_R, OppBelief.BEL_HFOV); bl.seen_empty(vis)
+    i0, j0 = cell((0.4, 0.0)); assert bl.p[i0, j0] < 0.05 * bl.p.max(), "seen-empty cell not cleared"
+    ib, jb = cell((1.7, 0.0)); assert bl.p[ib, jb] > 0.5 * bl.p.max(), "cell hidden behind the square block lost its belief"
+    before = bl.p[i0, j0]
+    for _ in range(30): bl.spread(0.1)
+    assert bl.p[i0, j0] > 5 * before, "belief did not regrow"
+    out.append("belief: seen floor cleared, hidden floor behind the block kept, regrows at walking speed")
+    bs = Brain("A", np.random.default_rng(4)); bs.reset(True, 0.0); bs.wait_until = 0; bs.t = 1.0
+    bs.bel.reset((2.0, 1.2)); bs.searching = bs.exploring = True
+    c, _ = bs._decide((0.0, 0.0, 0.0)); g = bs.sgoal
+    assert bs.state == "search" and np.linalg.norm(g - np.array([2.0, 1.2])) < 0.4, (bs.state, g)
+    out.append(f"search heads for the belief peak {np.round(g, 1)}")
+    bb = Brain("B", np.random.default_rng(4)); bb.reset(True, 0.0); bb.wait_until = 0; bb.t = 1.0; bb.bel.reset((-2.0, -1.2))
+    bb._decide((0.0, 0.0, math.pi)); assert np.allclose(bb.sgoal, -g, atol=0.11), (bb.sgoal, g); out.append("belief search mirror-symmetric")
+    # opponent unseen at start: belief search walks (no turning on the spot forever)
     b2 = Brain("B", np.random.default_rng(2)); b2.reset(True, 0.0); b2.wait_until = 0; b2.t = 0.5
-    yaw = 0.0; states = []
+    yaw = 0.0; spin = 0; walk = 0
     for i in range(80):
         b2.t = 0.5 + 0.1 * i; cmd, _ = b2.decide((0.0, 0.0, yaw))
         yaw = wrap(yaw + (-0.25 if cmd.get("rx", 0) > 0 else 0.25 if cmd.get("rx", 0) < 0 else 0.0))
-        states.append(b2.state)
-    assert "explore" in states or "search" in states; assert states.count("search") < 70, states.count("search")
-    out.append(f"scan then explore (search ticks {states.count('search')})")
+        if abs(cmd.get("lx", 0)) + abs(cmd.get("ly", 0)) > 0.05: walk += 1
+        elif abs(cmd.get("rx", 0)) > 0.1: spin += 1
+    assert walk > 0 and spin < 40, (walk, spin)
+    out.append(f"unseen opponent: belief search walks {walk} / turns in place {spin} of 80 ticks")
     # mirror: RED/BLUE decide the same under a point reflection
     cases = []
     for seed in (3, 5, 7):
@@ -339,4 +486,19 @@ def unit():
     assert all(a == b and fa == fb for a, b, fa, fb in cases), cases; out.append(f"mirror-symmetric ({len(cases)} cases)")
     # clearance constant
     assert CRAB_R == 0.25 and INFL == 0.30; out.append("leg clearance INFL=0.30")
+    # arena: every gap >= 2 x INFL, spawns in their pockets, and a route out round the bracket ends to the centre (both sides, mirrored)
+    from jhs.tanks import field as TF
+    bad = [(n, round(w, 2)) for n, w in TF.gaps() if w < 2 * INFL]
+    assert not bad, bad
+    for k, (sx, sy, _) in TF.START.items():
+        assert TF.wall_clear(sx, sy) >= INFL, (k, TF.wall_clear(sx, sy))
+    m = Memory(); pa = m.plan(np.array(TF.START["A"][:2]), np.array([0.0, 0.0]), False, sign=1)
+    pb = m.plan(np.array(TF.START["B"][:2]), np.array([0.0, 0.0]), False, sign=-1)
+    assert pa and pb and abs(len(pa) - len(pb)) <= 1, (len(pa), len(pb))
+    assert min(TF.wall_clear(*p) for p in pa) >= INFL - 0.06
+    assert max(abs(p[1]) for p in pa) > 0.8      # it walks round a bracket end (the spine blocks the straight line)
+    out.append(f"arena {2 * TF.FX:.1f}x{2 * TF.FY:.1f} m: gaps " + ", ".join(f"{w:.2f}" for _, w in TF.gaps()) + f" m; spawn->centre A* {len(pa)}/{len(pb)} cells round the bracket")
+    # no shot through a fixed wall
+    b3 = Brain("A"); b3.reset(True, 0.0); assert not b3.shot_clear((-3.0, 0.0), (0.0, 0.0)) and b3.shot_clear((-0.6, 0.0), (0.6, 0.0))
+    out.append("line of fire blocked by fixed walls")
     return out

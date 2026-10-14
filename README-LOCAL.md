@@ -451,7 +451,12 @@ Those tunes ship in this folder, under the same Apache 2.0 license as the rest o
 
 ## 7e. Crab Tanks 1v1 (`jumper_tanks_vision.app`) — SIM-ONLY VISION CONCEPT, experimental
 
-Two crabs hunt each other in the soccer-field arena (rounded, bouncy walls), in the spirit of the Atari game Combat ("Tanks").
+Two crabs hunt each other in their own arena (`maps/jumper-tanks-arena.map`, 7.0 x 4.5 m — about twice the soccer field —
+rounded bouncy walls), laid out after the classic Atari Combat ("Tanks") map: stubs from the middle of the top and bottom walls, four short
+bars near the corners, four L brackets framing the centre, a '[' / ']' bracket near each end and a square block inside each. These are
+fixed walls (shots bounce off them, crabs plan round them); every gap is at least 0.67 m, enough for the 0.30 m leg clearance on both sides.
+RED starts in the pocket behind the left bracket and BLUE behind the right one (1.0 m wide), facing the centre, and they walk back there
+after each hit. You can still add the movable obstacles on the setup page.
 Each crab is the official walking app driven through a virtual gamepad by its own brain (`jhs/tanks/brain.py`), which uses only
 that crab's own sim camera, dToF and pose.
 
@@ -461,7 +466,7 @@ that crab's own sim camera, dToF and pose.
   (on by default, up to 2 bounces; a shot lasts 6 s). Obstacles block shots, so they work as cover.
 - **Scoring (referee, SIM TRUTH):** a hit stuns the target for 1.5 s and scores a point. The shooter celebrates (a crab dance), then both
   crabs walk back to their start spots. The first to N hits wins (*Hits to win*, 1–10, default 3). The match length is a time cap.
-- **Brain (hand-built, no ML training):** scan once (bounded), then explore when the opponent is not in view; hunt to a ~1.4 m stand-off;
+- **Brain (hand-built, no ML training):** an *opponent belief* grid from its own vision only: floor it can see with no opponent in it drops to ~0, floor hidden behind walls keeps its value, and the belief spreads back at the opponent's top walking speed (a sighting resets it). When the opponent is not in view the crab walks to the likeliest spot and points its turret there (the heatmap in the top view); hunt to a ~1.4 m stand-off;
   lead the shot using the opponent's tracked velocity; dodge sideways when a seen shot's predicted path passes within ~0.3 m; take cover
   behind a sensed obstacle when a shot is coming. Routes keep a 0.30 m leg clearance (half-span 0.25 m + margin), as in soccer.
   RED and BLUE run the same mirror-symmetric code. A stuck/spin watchdog forces a walk.
@@ -470,7 +475,15 @@ that crab's own sim camera, dToF and pose.
 ```
 ./run.sh --headless --app apps/jumper_tanks_vision.app --tmax 120 --hits-to-win 3 [--no-bounce] [--obstacles SEED | --setup s.json]
 ```
-An MP4 (1x, full overlay: both crabs' cameras with opponent/shot boxes, dToF, top view with turrets and shots, referee line) is saved as for soccer.
+An MP4 (1x, full overlay: both crabs' cameras with opponent/shot boxes, dToF, a compact top view in the bottom-right corner with turrets, shots and belief heatmaps, referee line) is saved as for soccer.
+
+**Shots and dodging (SIM-ONLY VISION CONCEPT).** Projectiles are drawn as bright cyan 9 cm glowing heads with a 3-sphere fading
+trail, in the crab cameras, the live view and the MP4. A crab detects a shot from its own camera: cyan colour, roundness
+and size checks, a range estimate from the head's known size, and one detection per head-and-trail group. In tests a shot
+was found at 1-5 m down the arena, with 0 false sightings in 12 empty views. DODGE is the top-priority state. Any seen shot
+whose predicted path (including up to 2 wall or block bounces) passes within 0.30 m of the body triggers it. It overrides
+firing, hunting, cover and the walk-back. The crab strafes perpendicular to the shot, keeping 0.30 m from walls, or ducks
+behind nearer cover. It holds until the shot has passed, then resumes.
 
 ## 8. Plain official apps and the tidy-up app
 

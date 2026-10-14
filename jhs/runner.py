@@ -7,7 +7,8 @@ from .apps import inspect, extract_vision
 
 RUNS = Path(os.environ.get("JHS_RUNS", str(ROOT / "runs")))
 MAPS = {"hide_seek": ROOT / "maps" / "jumper-hide-seek-v7.map", "tidy_vision": ROOT / "maps" / "jumper-tidy-room.map",
-        "soccer": ROOT / "maps" / "jumper-soccer-field.map"}
+        "soccer": ROOT / "maps" / "jumper-soccer-field.map",
+        "tanks": ROOT / "maps" / "jumper-tanks-arena.map"}
 DEFAULT_MOVIES = Path.home() / "Movies" / "Jumper Hide & Seek"
 
 
@@ -151,7 +152,7 @@ def start_soccer(app, setup=None, seed=1, tmax=300.0, speed=1.0, live=True, live
 
 
 def start_tanks(app, setup=None, seed=1, tmax=300.0, speed=1.0, live=True, live_size=(1280, 720), physics_hz=None, pushable=True, hits_to_win=3, bounce=True):
-    """1v1 Crab Tanks (jhs/tanks/run.py) on the soccer field arena. setup = {A: [x, y, deg], B: [x, y, deg], props: {id: [x, y, deg]}}."""
+    """1v1 Crab Tanks (jhs/tanks/run.py) on its own arena map (maps/jumper-tanks-arena.map). setup = {A: [x, y, deg], B: [x, y, deg], props: {id: [x, y, deg]}}."""
     from .soccer import field as SF
     from .tanks import arena as TA
     info = inspect(app)
@@ -169,7 +170,7 @@ def start_tanks(app, setup=None, seed=1, tmax=300.0, speed=1.0, live=True, live_
                TK_PUSHABLE="1" if pushable else "0", TK_HITS=str(max(1, min(10, int(hits_to_win)))), TK_BOUNCE="1" if bounce else "0",
                JHS_LIVE_W=str(live_size[0]), JHS_LIVE_H=str(live_size[1]))
     from .pushable import variant
-    scene = variant(MAPS["soccer"], rd / "scene.map", pushable=bool(pushable), moves=setup["props"] or None)
+    scene = variant(MAPS["tanks"], rd / "scene.map", pushable=bool(pushable), moves=setup["props"] or None)
     app_for_play = Path(info["path"])
     if os.environ.get("JHS_FORCE_LOCAL_CONTROLLER") == "1":
         app_for_play = strip_controller(app_for_play, rd / "app_local_controller.app")

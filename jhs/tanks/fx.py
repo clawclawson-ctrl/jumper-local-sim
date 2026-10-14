@@ -5,7 +5,9 @@ import math
 import numpy as np
 from . import arena as A
 
-SHOT_RGBA = np.array([0.15, 1.0, 1.0, 1.0], np.float32)    # glowing cyan (a colour nothing else in the arena has)
+SHOT_RGBA = np.array([0.0, 1.0, 1.0, 1.0], np.float32)     # bright glowing cyan (a colour nothing else in the arena has)
+SHOT_DRAW_R = 0.045                                           # drawn head radius (the hit test uses arena.HIT_R)
+TRAIL = ((0.07, 0.030, 0.75), (0.13, 0.021, 0.5), (0.19, 0.013, 0.3))   # (distance behind, radius, alpha)
 TURRET_RGBA = np.array([0.18, 0.18, 0.20, 1.0], np.float32)
 BARREL_RGBA = np.array([0.55, 0.55, 0.58, 1.0], np.float32)
 TEAM_RGBA = {"A": np.array([0.95, 0.30, 0.15, 1.0], np.float32), "B": np.array([0.20, 0.35, 0.95, 1.0], np.float32)}
@@ -35,4 +37,9 @@ def draw(mj, scn, crabs, turrets, shots, skip=None):
         Rb = R @ np.array([[0, 0, 1], [0, 1, 0], [-1, 0, 0]], float)
         _add(mj, scn, mj.mjtGeom.mjGEOM_CAPSULE, [0.011, 0.06, 0], base + R @ np.array([0.07, 0, 0.004]), Rb, BARREL_RGBA)
     for s in shots:
-        _add(mj, scn, mj.mjtGeom.mjGEOM_SPHERE, [A.SHOT_R, 0, 0], [s["x"], s["y"], A.SHOT_Z], np.eye(3), SHOT_RGBA, emission=0.9)
+        _add(mj, scn, mj.mjtGeom.mjGEOM_SPHERE, [SHOT_DRAW_R, 0, 0], [s["x"], s["y"], A.SHOT_Z], np.eye(3), SHOT_RGBA, emission=1.0)
+        vx, vy = s.get("vx", 0.0), s.get("vy", 0.0); n = math.hypot(vx, vy)
+        if n < 1e-6: continue
+        for dist, r, al in TRAIL:      # a short fading trail behind the head (separate small spheres)
+            c = SHOT_RGBA.copy(); c[3] = al
+            _add(mj, scn, mj.mjtGeom.mjGEOM_SPHERE, [r, 0, 0], [s["x"] - vx / n * dist, s["y"] - vy / n * dist, A.SHOT_Z], np.eye(3), c, emission=1.0)

@@ -21,7 +21,6 @@ def main(A, RUN, INFO, OUT, W, H, progress):
         def close(self): pass
     controller.open = lambda *a, **k: NoPad()
     st = INFO.get("setup") or {}
-    from jhs.soccer import field as F
     from jhs.tanks import arena as TA
     WD.install(tasks, st.get("A") or TA.START["A"], st.get("B") or TA.START["B"], int(INFO.get("seed", 1)))
 
@@ -54,7 +53,7 @@ def main(A, RUN, INFO, OUT, W, H, progress):
             m = meta[k] if mt[k] <= t + 1e-6 else {}
             fxi = FXB[i] if i < len(FXB) else {"tur": {}, "shots": []}
             crabs = {kk: tuple(float(v) for v in rd.xpos[mujoco.mj_name2id(rmodel, mujoco.mjtObj.mjOBJ_BODY, pf + "base_link")][:3]) for kk, pf in (("A", "robot/"), ("B", "robot2/"))}
-            shots = [dict(x=a, y=b, owner=o) for a, b, o in fxi["shots"]]
+            shots = [dict(x=q[0], y=q[1], owner=q[2], vx=(q[3] if len(q) > 3 else 0.0), vy=(q[4] if len(q) > 4 else 0.0)) for q in fxi["shots"]]
             rend.update_scene(rd, bc.update(crabs["A"][:2])); FXD.draw(mujoco, rend.scene, crabs, fxi["tur"], shots); img = Image.fromarray(rend.render())
             ov.draw(img, m, cams[0], cams[1], tA[k], tB[k], t, tmax, speed_label="1x speed", props=footprints(rmodel, rd, pg), shots=shots)
             w.append_data(np.asarray(img)); n += 1

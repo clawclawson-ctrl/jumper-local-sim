@@ -13,7 +13,8 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent.parent))
-from jhs.soccer import field as F, world as WD, vision  # noqa: E402
+from jhs.soccer import world as WD, vision  # noqa: E402
+from jhs.tanks import field as F  # noqa: E402
 from jhs.tanks import arena as A, brain as TB, fx as FXD  # noqa: E402
 
 REPO = Path(os.environ.get("JUMPER_REPO", str(HERE.parent.parent / "toolkit")))
@@ -175,7 +176,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
     pending = None; ref_line = "fight!"
     shots = []; turret = {"A": math.radians(START["A"][2]), "B": math.radians(START["B"][2])}
     stun_until = {"A": 0.0, "B": 0.0}; fired = {"A": 0, "B": 0}; shot_end = {"hit": 0, "cover": 0, "wall": 0, "expired": 0}
-    near_miss = {"A": 0, "B": 0}; dodges_ok = {"A": 0, "B": 0}
+    dodges_ok = {"A": 0, "B": 0}; hit_seen = {"A": 0, "B": 0}; survived_seen = {"A": 0, "B": 0}
     qbuf, qt, vis_meta, tofA, tofB, fxbuf = [], [], [], [], [], []
     truth = open(OUTD / "truth.jsonl", "w"); t_wall = time.time(); stopped = False; t = 0.0; mt = 0.0
     cmds = {"A": {}, "B": {}}; poses = {"A": tuple(START["A"][:2]) + (math.radians(START["A"][2]),), "B": tuple(START["B"][:2]) + (math.radians(START["B"][2]),)}
@@ -218,6 +219,8 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                     br.turret = turret[k]; br.own_in_flight = any(s["owner"] == k for s in shots)   # proprioception: turret angle, "reloaded" lamp
                     br.stun_until = stun_until[k]
                     br.observe(t, p, pose); poses[k] = pose
+                    for s_ in shots:          # stat only (SIM TRUTH): did this crab's own vision pick up the other crab's shot?
+                        if s_["owner"] != k and any(math.hypot(d_["xy"][0] - s_["x"], d_["xy"][1] - s_["y"]) < 0.3 for d_ in p["shots"]): s_["seen"] = True
                     fire = None
                     if pending is not None and pending[0] == "return": cmds[k] = br.return_cmd(pose)
                     elif pending is None:
@@ -250,7 +253,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                                     opp_age=round(min(t - br.opp_t, 99), 1),
                                     dets=[dict(cls="opponent", bbox=d["bbox"], rng=round(d["rng"], 2)) for d in p["opp"]] +
                                          [dict(cls="shot", bbox=d["bbox"], rng=round(d["rng"], 2)) for d in p["shots"]],
-                                    nshots_seen=len(br.shots), nobst=int(p["obst"].shape[0]))
+                                    nshots_seen=len(br.shots), nobst=int(p["obst"].shape[0]), belief=br.bel.coarse(4).tolist())
                     if SAVEVIS:
                         (OUTD / "vis").mkdir(exist_ok=True)
                         imageio.imwrite(OUTD / "vis" / f"{k}_{len(vis_meta):05d}.jpg", img[::2, ::2], quality=85)
@@ -274,6 +277,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                     shot_end[kind] += 1
                     if kind == "hit" and pending is None:
                         sh = s["owner"]; score[sh] += 1; stun_until[who] = t + A.STUN_S
+                        if s.get("seen"): hit_seen[who] += 1
                         hits.append(dict(t=round(t, 1), team=F.TEAM[sh], target=F.TEAM[who], flight_s=round(s["age"], 2), bounces=s["bounces"]))
                         ref_line = f"HIT {F.TEAM[sh]} on {F.TEAM[who]} at {t:.0f}s"; ev("hit", team=F.TEAM[sh], target=F.TEAM[who], score=dict(score), bounces=s["bounces"])
                         win = score[sh] >= HITS_TO_WIN
@@ -282,6 +286,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                     elif kind != "hit":
                         tgt = "B" if s["owner"] == "A" else "A"
                         if s.get("closest", 9) < 0.45: dodges_ok[tgt] += 1    # a shot that came close and missed = dodged (or lucky)
+                        if s.get("seen") and s.get("closest", 9) < 0.6: survived_seen[tgt] += 1
                         ev("shot_end", team=F.TEAM[s["owner"]], how=kind, at=[round(s["x"], 2), round(s["y"], 2)], closest=round(s.get("closest", 9), 2))
                 cz = crab_xyz()
                 for s in shots:      # closest approach to the target (stat)
@@ -327,7 +332,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                                             "shots": [[round(s["x"], 2), round(s["y"], 2), s["owner"]] for s in shots]}) + "\n")
             if step % q_every == 0:
                 qbuf.append(np.array(live.qpos, dtype=np.float64)); qt.append(t)
-                fxbuf.append(dict(tur={k: round(turret[k], 3) for k in turret}, shots=[[round(s["x"], 3), round(s["y"], 3), s["owner"]] for s in shots]))
+                fxbuf.append(dict(tur={k: round(turret[k], 3) for k in turret}, shots=[[round(s["x"], 3), round(s["y"], 3), s["owner"], round(s["vx"], 3), round(s["vy"], 3)] for s in shots]))
             step += 1
             if step % 2000 == 0:
                 print(f"[run] t={t:.0f}s wall={time.time() - t_wall:.0f}s score {score['A']}-{score['B']} A={brains['A'].state} B={brains['B'].state} "
@@ -338,6 +343,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                    bounce=BOUNCE, hits_to_win=HITS_TO_WIN, t_end=round(step * dt, 2), stopped=stopped,
                    score={"RED": score["A"], "BLUE": score["B"]}, hits=hits, shots_fired={F.TEAM[k]: v for k, v in fired.items()},
                    shot_ends=shot_end, close_misses_survived={F.TEAM[k]: v for k, v in dodges_ok.items()},
+                   seen_shots_survived={F.TEAM[k]: v for k, v in survived_seen.items()}, hit_by_seen_shot={F.TEAM[k]: v for k, v in hit_seen.items()},
                    leg_bumps={F.TEAM[k]: v for k, v in bumps.items()}, returns=returns, match_clock_s=round(mt, 1),
                    max_spin_only_s={F.TEAM[k]: round(v, 1) for k, v in max_rot.items()},
                    winner=F.TEAM.get(winner) if final else None, final=final, falls={"RED": falls["A"], "BLUE": falls["B"]},
