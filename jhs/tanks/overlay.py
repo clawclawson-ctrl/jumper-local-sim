@@ -123,11 +123,44 @@ class TanksOverlay:
 
 
 class BroadcastCam:
-    def __init__(self):
-        import mujoco
-        self.cam = mujoco.MjvCamera(); self.cam.type = mujoco.mjtCamera.mjCAMERA_FREE; self.x = 0.0
+    """spectator camera. mode 'fixed': the old overview. mode 'follow' (default): frames both crabs + shots in flight, zooms in when
+    they are close and out when far apart (clamped to the arena), eased with a critically damped spring (no jitter / snapping),
+    leading a little toward a shot closing in on a crab. Celebration and walk-back stay framed because the crabs are."""
+    OVER = (0.0, -0.55, 7.6)                         # lookat x, y, distance of the fixed overview
+    W0 = 1.8                                         # spring rate (1/s), critically damped
 
-    def update(self, look_xy=None):
-        if look_xy is not None: self.x += (0.35 * float(look_xy[0]) - self.x) * 0.05
-        self.cam.lookat[:] = [self.x, -0.55, 0.0]; self.cam.distance = 7.6; self.cam.azimuth = 90.0; self.cam.elevation = -52.0
+    def __init__(self, mode=None):
+        import mujoco
+        self.mode = (mode or "follow").lower()
+        self.cam = mujoco.MjvCamera(); self.cam.type = mujoco.mjtCamera.mjCAMERA_FREE; self.x = 0.0
+        self.s = np.array(self.OVER, float); self.v = np.zeros(3); self.t = None
+
+    def target(self, crabs, shots=None):
+        from . import field as F
+        pts = [np.asarray(c[:2], float) for c in (crabs or {}).values() if c is not None]
+        if not pts: return np.array(self.OVER)
+        for q in shots or []:
+            p = np.array([q["x"], q["y"]], float); v = np.array([q.get("vx", 0.0), q.get("vy", 0.0)], float)
+            if min(np.linalg.norm(p - c) for c in pts) < 3.0:
+                pts.append(p)
+                if any(float((c - p) @ v) > 0 for c in pts[:2]): pts.append(p + 0.8 * v)       # brief lead toward an incoming shot
+        P = np.array(pts); lo, hi = P.min(0) - 0.45, P.max(0) + 0.45; c = (lo + hi) / 2
+        ext = max(hi[0] - lo[0], (hi[1] - lo[1]) * 1.9)              # 16:9 frame, steep view: y counts more
+        dist = float(np.clip(1.6 + 0.95 * ext, 3.4, self.OVER[2]))
+        k = (dist - 3.4) / (self.OVER[2] - 3.4)                         # how zoomed out (0..1); at the overview it is centred
+        mx = (F.FX - 0.15) * (1 - k) + 0.0 * k; my = (F.FY - 0.4) * (1 - k)
+        cx = float(np.clip(c[0], -mx, mx)); cy = float(np.clip(c[1], -my, my)) - 0.55 * dist / self.OVER[2]
+        return np.array([cx, cy, dist])
+
+    def update(self, look_xy=None, t=None, crabs=None, shots=None):
+        if self.mode == "fixed" or (crabs is None and look_xy is None):
+            self.s = np.array(self.OVER, float)
+        else:
+            if crabs is None: crabs = {"A": look_xy}
+            tg = self.target(crabs, shots)
+            dt = 0.04 if (t is None or self.t is None) else float(np.clip(t - self.t, 0.0, 0.5)); self.t = t
+            n = max(1, int(dt / 0.01)); h = dt / n; w = self.W0
+            for _ in range(n):                                          # critically damped: x'' = w^2 (g - x) - 2 w x'
+                a = w * w * (tg - self.s) - 2 * w * self.v; self.v += a * h; self.s += self.v * h
+        self.cam.lookat[:] = [self.s[0], self.s[1], 0.0]; self.cam.distance = float(self.s[2]); self.cam.azimuth = 90.0; self.cam.elevation = -52.0
         return self.cam

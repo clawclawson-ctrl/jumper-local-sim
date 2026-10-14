@@ -63,6 +63,7 @@
   <span id="tkopts" style="display:none">Hits to win <input id="thits" type="number" value="3" min="1" max="10" style="width:50px"> <label><input type="checkbox" id="tbounce" checked> Shots bounce off walls</label>
    Openings <select id="topen" onchange="$('tlock').style.display=this.value==='locked'?'':'none'"><option value="random">Random</option><option value="locked">Locked</option></select>
    <span id="tlock" style="display:none">RED <select id="topA"></select> BLUE <select id="topB"></select></span>
+   Camera <select id="tcam"><option value="follow">Follow action</option><option value="fixed">Fixed overview</option></select>
    openings seed <input id="topseed" type="number" placeholder="new each match" style="width:110px"> (the match length is the cap; shots are slow so the crabs can dodge)</span>
   <span id="scopts">Aggression RED <input id="saggA" type="number" value="0.7" min="0" max="1" step="0.1" style="width:50px"> BLUE <input id="saggB" type="number" value="0.7" min="0" max="1" step="0.1" style="width:50px">
   Goals to win <input id="sgoals" type="number" value="3" min="1" max="10" style="width:50px"> (the match length is the cap)</span></div>
@@ -244,7 +245,7 @@ async function sRandom(){const r=await api(TK?'/api/tanks_random':'/api/soccer_r
 async function sCheck(){const r=await api(TK?'/api/tanks_check':'/api/soccer_check',{setup:sb}); const m=(r.messages||[]).map(x=>`<span class="${x.level==='error'?'err':'warn'}">${x.level==='warn'?'WARNING: ':''}${x.text}</span>`);
  if(!m.length) m.push('<span class="ok">setup OK</span>'); $('scheck').innerHTML=m.join(' · '); $('sstart').disabled=!r.ok;}
 async function sStart(){const a=app(); $('smsg').textContent='starting… (two crabs: the world takes ~40 s to build)';
- if(TK) sb.openings=tOpenings(); else delete sb.openings;
+ if(TK){sb.openings=tOpenings(); sb.camera=$('tcam').value;} else {delete sb.openings; delete sb.camera;}
  const r=await api('/api/start',{app:a.path,setup:sb,pushable:$('spush').checked,seed:+$('smseed').value,tmax:+$('stmax').value,speed:+$('sspeed').value,physics_hz:$('sphys').value?+$('sphys').value:null,live:$('slive').checked,goals_to_win:Math.max(1,Math.min(10,+$('sgoals').value||3)),hits_to_win:Math.max(1,Math.min(10,+$('thits').value||3)),bounce:$('tbounce').checked,aggression:{A:Math.max(0,Math.min(1,+$('saggA').value)),B:Math.max(0,Math.min(1,+$('saggB').value))}});
  if(!r.ok){$('smsg').innerHTML='<span class="err">'+(r.error||'failed')+'</span>';return;} $('smsg').textContent=''; curRun=r.run; showLive();}
 // ---------- run ----------

@@ -38,7 +38,7 @@ def main(A, RUN, INFO, OUT, W, H, progress):
         meta = json.load(open(RUN / "vision_meta.json")); tz = np.load(RUN / "vision_tof.npz")
         tA, tB = tz["tofA"].astype(np.float32), tz["tofB"].astype(np.float32)
         mt = np.array([m["t"] for m in meta]); pg = prop_geoms(rmodel)
-        ov = TanksOverlay(W, H); FXB = json.load(open(RUN / "tanks_fx.json")) if (RUN / "tanks_fx.json").exists() else []; bc = BroadcastCam(); tmax = float(INFO.get("tmax", 300))
+        ov = TanksOverlay(W, H); FXB = json.load(open(RUN / "tanks_fx.json")) if (RUN / "tanks_fx.json").exists() else []; bc = BroadcastCam((json.load(open(RUN / 'setup.json')).get('camera') if (RUN / 'setup.json').exists() else None) or os.environ.get('TK_CAMERA')); tmax = float(INFO.get("tmax", 300))
         sel = [i for i in range(len(qt)) if A.t0 <= qt[i] <= A.t1]
         w = imageio.get_writer(str(OUT), fps=25, codec="libx264", quality=8, macro_block_size=8, ffmpeg_params=["-pix_fmt", "yuv420p"])
         t_start = time.time(); n = 0; last_k = -1; cams = (None, None)
@@ -54,7 +54,7 @@ def main(A, RUN, INFO, OUT, W, H, progress):
             fxi = FXB[i] if i < len(FXB) else {"tur": {}, "shots": []}
             crabs = {kk: tuple(float(v) for v in rd.xpos[mujoco.mj_name2id(rmodel, mujoco.mjtObj.mjOBJ_BODY, pf + "base_link")][:3]) for kk, pf in (("A", "robot/"), ("B", "robot2/"))}
             shots = [dict(x=q[0], y=q[1], owner=q[2], vx=(q[3] if len(q) > 3 else 0.0), vy=(q[4] if len(q) > 4 else 0.0)) for q in fxi["shots"]]
-            rend.update_scene(rd, bc.update(crabs["A"][:2])); FXD.draw(mujoco, rend.scene, crabs, fxi["tur"], shots); img = Image.fromarray(rend.render())
+            rend.update_scene(rd, bc.update(t=t, crabs={kk: v[:2] for kk, v in crabs.items()}, shots=shots)); FXD.draw(mujoco, rend.scene, crabs, fxi["tur"], shots); img = Image.fromarray(rend.render())
             ov.draw(img, m, cams[0], cams[1], tA[k], tB[k], t, tmax, speed_label="1x speed", props=footprints(rmodel, rd, pg), shots=shots)
             w.append_data(np.asarray(img)); n += 1
             if j % 25 == 0:

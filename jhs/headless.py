@@ -39,6 +39,7 @@ def main():
     ap.add_argument("--openings", choices=("random", "locked"), default="random", help="tanks: per-crab opening strategies (random rolls each round; seeded by --seed when given)")
     ap.add_argument("--opener-red", default="PEEK_NEAR", help="tanks, --openings locked: PEEK_NEAR|PEEK_FAR|HOLD|PUSH_MID")
     ap.add_argument("--opener-blue", default="PEEK_NEAR", help="tanks, --openings locked: PEEK_NEAR|PEEK_FAR|HOLD|PUSH_MID")
+    ap.add_argument("--camera", choices=("follow", "fixed"), default=None, help="tanks: spectator camera: follow the action (default) or the fixed overview")
     ap.add_argument("--no-bounce", action="store_true", help="tanks: shots stop at the walls instead of bouncing")
     ap.add_argument("--goals-to-win", type=int, default=3, choices=range(1, 11), metavar="1-10", help="soccer: first to this many goals wins (default 3; --tmax is the cap)")
     ap.add_argument("--aggression", default="0.7,0.7", help="soccer: RED,BLUE aggression 0 (cautious) .. 1 (aggressive), default 0.7,0.7")
@@ -206,6 +207,7 @@ def tanks(a, info, audio):
     if op["mode"] == "locked": op.setdefault("A", a.opener_red.upper()); op.setdefault("B", a.opener_blue.upper())
     if a.seed is not None: op.setdefault("seed", a.seed)          # given seed -> reproducible openings; none -> new every match
     setup["openings"] = op
+    if a.camera: setup["camera"] = a.camera
     for l, m in TA.validate(setup): print(f"  {l}: {m}")
     if any(l == "error" for l, _ in TA.validate(setup)): sys.exit("invalid setup")
     tmax = a.tmax or 300.0; seed = a.seed if a.seed is not None else (a.random if a.random is not None else 1)

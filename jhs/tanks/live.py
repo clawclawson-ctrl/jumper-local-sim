@@ -23,7 +23,7 @@ class TanksHook:
         self.rmodel.vis.global_.offwidth = max(self.W, self.rmodel.vis.global_.offwidth); self.rmodel.vis.global_.offheight = max(self.H, self.rmodel.vis.global_.offheight)
         self.rd = mujoco.MjData(self.rmodel)
         self.rend = mujoco.Renderer(self.rmodel, self.H, self.W) if self.enabled else None
-        self.ov = TanksOverlay(self.W, self.H); self.cam = BroadcastCam()
+        self.ov = TanksOverlay(self.W, self.H); self.cam = BroadcastCam((__import__('json').load(open(os.environ['TK_SETUP'])).get('camera') if os.environ.get('TK_SETUP') else None) or os.environ.get('TK_CAMERA'))
         self.img = {"A": None, "B": None}; self.tof = {"A": None, "B": None}; self.m = {}
         self.last = -1e9; self.t0 = None; self.sim0 = 0.0; self.nframes = 0; self.last_status = 0.0
         from jhs.pushable import prop_geoms
@@ -46,10 +46,8 @@ class TanksHook:
             from . import fx as FX
             model, live = self.sim.env_mjdata(0)
             self.rd.qpos[:] = live.qpos[: self.rmodel.nq]; self.mj.mj_forward(self.rmodel, self.rd)
-            look = None
-            for k in ("A", "B"):
-                if (self.m.get(k) or {}).get("pose"): look = (self.m[k]["pose"][0], self.m[k]["pose"][1]); break
-            self.rend.update_scene(self.rd, self.cam.update(look))
+            crabs = {k: tuple(self.m[k]["pose"][:2]) for k in ("A", "B") if (self.m.get(k) or {}).get("pose")}
+            self.rend.update_scene(self.rd, self.cam.update(t=t, crabs=crabs or None, shots=self.m.get("shots")))
             if self.draw_cb: self.draw_cb(self.mj, self.rend.scene)   # turrets + shots with trails
             frame = Image.fromarray(self.rend.render())
             wall = time.time() - self.t0; rate = (t - self.sim0) / wall if wall > 1 else 0.0

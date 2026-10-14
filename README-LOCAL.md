@@ -498,6 +498,17 @@ On the setup page, Openings = Random (default) or Locked, with a per-crab dropdo
 repeatable; leave it blank for a new roll every match. Headless: `--openings random|locked --opener-red X --opener-blue Y`;
 `--seed` also seeds the openings. The rolled openers and the first contact of each round are listed in `result.json`.
 
+**Dodge planning.** A seen shot's path is predicted with up to 2 wall or block bounces, and the crab reacts when the path is
+predicted to pass within 0.38 m. It then tries candidate steps: perpendicular first, then diagonal, forward or back. A step
+must keep 0.30 m from walls (along the way too), be reachable before the shot arrives and clear the predicted path by
+0.36 m. Ducking behind cover is used when it is quicker. A bounced enemy shot that passes next to the crab's own shot is
+no longer mistaken for its own.
+
+**Spectator camera.** Camera = Follow action (default) or Fixed overview (setup page; headless `--camera follow|fixed`). Follow
+frames both crabs plus nearby shots in flight. It zooms in when they are close and out to the overview when they are far
+apart, stays inside the arena, and eases its motion with a critically damped spring. It leads a little toward an incoming
+shot. The celebration and the walk-back stay in frame. It applies to the live view and the MP4; the panels do not move.
+
 ## 8. Plain official apps and the tidy-up app
 
 - **Plain apps** (any app without a vision brain): choose it, pick a room, and press **Start**. MuJoCo's 3D window
