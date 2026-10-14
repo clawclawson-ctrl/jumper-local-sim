@@ -502,7 +502,11 @@ repeatable; leave it blank for a new roll every match. Headless: `--openings ran
 predicted to pass within 0.38 m. It then tries candidate steps: perpendicular first, then diagonal, forward or back. A step
 must keep 0.30 m from walls (along the way too), be reachable before the shot arrives and clear the predicted path by
 0.36 m. Ducking behind cover is used when it is quicker. A bounced enemy shot that passes next to the crab's own shot is
-no longer mistaken for its own.
+no longer mistaken for its own. A detection near the crab's own shot counts as its own only when it is not already tracked as an enemy shot and
+does not move against the crab's own shot from one frame to the next (an enemy shot closing in is kept and dodged). That
+frame-to-frame motion also gives a new shot its first velocity. Spin watchdog: more than 3 s of turn-only commands makes the
+crab walk (strafing) to a new search target. At its start spot the crab stops turning once within 11 degrees, and it never
+turns with commands small enough to stall in the app's deadband.
 
 **Spectator camera.** Camera = Follow action (default) or Fixed overview (setup page; headless `--camera follow|fixed`). Follow
 frames both crabs plus nearby shots in flight. It zooms in when they are close and out to the overview when they are far

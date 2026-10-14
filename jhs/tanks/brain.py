@@ -98,6 +98,11 @@ def _seg_blocked(a, b, n=8):
     return any(piece_dist(a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n) < 0.01 for k in range(1, n))
 
 
+SPIN_MAX = 3.0                              # s of turn-only commands before the watchdog forces a walk
+TURN_MIN = 0.62                             # smallest rx the app reliably turns with (0.49 sat in its deadband)
+RET_YAW_OK = math.radians(11)              # at the start spot: inside this, stop turning (referee tolerance 15 deg)
+
+
 class Brain:
     def __init__(self, team, rng=None, pushable=False, bounce=True):
         self.team = team; self.dirx = +1 if team == "A" else -1; self.pushable = bool(pushable); self.bounce = bool(bounce)
@@ -114,7 +119,7 @@ class Brain:
         self.stuck_ref = None; self.scan_acc = 0.0; self.scan_prev = None; self.scan_t0 = t
         self.searching = False; self.exploring = False; self.exp_goal = None; self.exp_path = []; self.exp_t = -1e9
         self.wait_until = t + 0.6; self.obst = np.zeros((0, 3)); self.last_cmd = {}; self.wd = (t, np.zeros(2))
-        self.cover = None; self.stun_until = 0.0; self.ret_spot = None; self.own = None; self.dodge_hold = -1e9; self.dodge_goal = None; self.threat_path = np.zeros((0, 3))
+        self.cover = None; self.stun_until = 0.0; self.ret_spot = None; self.own = None; self.dodge_hold = -1e9; self.dodge_goal = None; self.spin_t0 = None; self.threat_path = np.zeros((0, 3))
         opp_start = A.START["B" if self.team == "A" else "A"]           # rules / map knowledge: where the opponent starts
         if not hasattr(self, "bel"): self.bel = OppBelief()
         self.bel.reset(opp_start[:2] if kickoff else None, sigma=0.3); self.bel_t = t; self.sgoal = None; self.spath = []; self.splan_t = -1e9
@@ -211,7 +216,7 @@ class Brain:
 
     def begin_return(self, spot, t):
         self.ret_spot = (float(spot[0]), float(spot[1]), math.radians(spot[2])); self.ret_path = []; self.ret_plan_t = -1e9
-        self.state = "return"; self.sub = "returning to start"; self.t = t; self.stuck_ref = None; self.hold = None
+        self.state = "return"; self.sub = "returning to start"; self.t = t; self.ret_noturn = False; self.spin_t0 = None; self.stuck_ref = None; self.hold = None
 
     def return_cmd(self, pose):
         dcmd = self._dodge(pose)                 # a seen shot outranks walking back too
@@ -219,8 +224,12 @@ class Brain:
         x, y, yaw = pose; me = np.array([x, y]); sx, sy, sh = self.ret_spot; goal = np.array([sx, sy])
         dg = float(np.linalg.norm(goal - me))
         if dg < 0.12:
-            e = wrap(sh - yaw); self.sub = "at start, waiting" if abs(e) < 0.2 else "turning to face the opponent"
-            return {"rx": (-1 if e > 0 else 1) * (0.45 + 0.3 * min(1.0, abs(e)))} if abs(e) > 0.12 else {}
+            # seed 44 (d0c69b6): a 7 deg error asked for rx 0.49, inside the app's turn deadband -> 8.3 s of "turning" without
+            # moving. Inside the referee's 15 deg tolerance (with margin) just wait; otherwise turn with a command that really turns.
+            e = wrap(sh - yaw)
+            if abs(e) < RET_YAW_OK or getattr(self, "ret_noturn", False): self.sub = "at start, waiting"; return {}
+            self.sub = "turning to face the opponent"
+            return self._spin_guard({"rx": (-1 if e > 0 else 1) * (TURN_MIN + 0.25 * min(1.0, abs(e)))}, pose, at_start=True)
         if self.t - self.ret_plan_t > 1.0 or not self.ret_path:
             self.ret_path = self.mem.plan(me, goal, self.pushable, self._opp_block, sign=self.dirx) or [me, goal]; self.ret_plan_t = self.t
         while len(self.ret_path) > 1 and (np.linalg.norm(self.ret_path[0] - me) < 0.22 or self.mem.clear_line(me, self.ret_path[1])): self.ret_path.pop(0)
@@ -413,8 +422,28 @@ class Brain:
             side = 1 if self.rng.random() < 0.5 else -1
             self.hold = {"ly": 0.35, "lx": 0.25 * side}; self.hold_until = t + 1.2; self.stuck_ref = None
             return dict(self.hold), None
+        cmd = self._spin_guard(cmd, pose)
         self.last_cmd = cmd
         return cmd, fire
+
+    def _spin_guard(self, cmd, pose, at_start=False):
+        """watchdog: a turn-only command held for more than SPIN_MAX s (any state but dodge) forces a walk to a new search target
+        (at the start spot: stop turning; the referee tolerance is met or the timeout places the crab)."""
+        t = self.t; spin = abs(cmd.get("rx", 0)) > 0.1 and abs(cmd.get("lx", 0)) + abs(cmd.get("ly", 0)) < 0.05
+        if not spin or self.state == "dodge": self.spin_t0 = None; return cmd
+        if self.spin_t0 is None: self.spin_t0 = t
+        if t - self.spin_t0 <= SPIN_MAX: return cmd
+        self.spin_t0 = None; self.counts["unspins"] = self.counts.get("unspins", 0) + 1
+        if at_start: self.sub = "at start, waiting (turn watchdog)"; self.ret_noturn = True; return {}
+        me = np.array(pose[:2]); free = np.argwhere(OppBelief.FREE)
+        for _ in range(30):
+            i, j = free[int(self.rng.integers(len(free)))]; g = np.array([CX[i, j], CY[i, j]])
+            if 1.0 < np.linalg.norm(g - me) < 3.5 and wall_clear(*g) >= INFL: break
+        self.sgoal = g; self.splan_t = t + 2.0; self.opening = None
+        self.spath = self.mem.plan(me, g, self.pushable, self._opp_block, sign=self.dirx) or [g]
+        self.state = "search"; self.sub = f"SPIN WATCHDOG: walking to ({g[0]:.1f}, {g[1]:.1f})"
+        nxt = self.spath[1] if len(self.spath) > 1 else self.spath[0]
+        return self._drive(pose, np.asarray(nxt, float), face_yaw=pose[2])            # strafe off at once: no turning first
 
     def _decide(self, pose):
         x, y, yaw = pose; me = np.array([x, y]); t = self.t; fire = None
@@ -655,6 +684,20 @@ def unit():
     rp.decide((-3.0, 0.0, 0.0)); gp = rp.dodge_goal
     assert rp.state == "dodge" and TF.wall_clear(*gp) >= INFL and rp._step_clear(gp, 2.1) >= rp.SAFE, (gp, rp._step_clear(gp, 2.1))
     out.append(f"pocket: shot in round the bracket end -> sidestep to ({gp[0]:.2f}, {gp[1]:.2f}), {TF.wall_clear(*gp):.2f} m from walls")
+    # ---- regression: seed 44 (d0c69b6) - 8.3 s "turning" at the start spot with rx 0.49 (deadband), and a 3 s spin watchdog ----
+    rs = Brain("A", np.random.default_rng(4)); rs.reset(True, 0.0); rs.begin_return((-2.966, -0.044, -0.2), 30.0)
+    c_ = rs.return_cmd((-2.966, -0.044, math.radians(-0.2) + 0.13)); assert c_ == {}, c_
+    c_ = rs.return_cmd((-2.966, -0.044, math.radians(-0.2) + 0.6)); assert abs(c_.get("rx", 0)) >= TURN_MIN, c_
+    for k_ in range(40): rs.t = 30.0 + 0.1 * k_; c_ = rs.return_cmd((-2.966, -0.044, math.radians(-0.2) + 0.6))
+    assert c_ == {}, c_
+    rw = Brain("A", np.random.default_rng(5)); rw.reset(True, 0.0); rw.wait_until = 0; spun = 0.0; walked = False
+    for k_ in range(60):
+        rw.t = 1.0 + 0.1 * k_; rw.state = "search"
+        c_ = rw._spin_guard({"rx": 0.7}, (0.0, 1.0, 0.0))
+        if abs(c_.get("lx", 0)) + abs(c_.get("ly", 0)) > 0.05: walked = True; break
+        spun += 0.1
+    assert walked and spun <= SPIN_MAX + 0.15, (walked, spun)
+    out.append(f"regression seed 44: no deadband turning at the start spot (stops within 11 deg, turns with rx >= {TURN_MIN}); spin watchdog walks after {spun:.1f} s")
     # ---- openers ----
     rng = np.random.default_rng(11); cnt = {k: {o: 0 for o in OPENERS} for k in ("A", "B")}; worst = 9.0
     for _ in range(4000):
