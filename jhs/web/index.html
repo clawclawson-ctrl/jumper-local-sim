@@ -49,7 +49,7 @@
 </section>
 
 <section id="surroundsetup" style="display:none"><h2>2 · Set up the match (crab surround 1v1: light-cycle trails, CYBER, SIM-ONLY)</h2>
- <div class="muted"><b>SIM-ONLY VISION CONCEPT.</b> Each crab lays a glowing trail along its real path; touching any trail or the outer wall loses the round (crab-to-crab bumps are harmless). Each crab sees only with its own simulated camera + dToF and knows its own pose.</div>
+ <div class="muted"><b>SIM-ONLY VISION CONCEPT.</b> Each crab lays a glowing trail along its real path; touching the OPPONENT's trail loses the round (own trail, outer walls and crab-to-crab bumps are harmless). Each crab sees only with its own simulated camera + dToF and knows its own pose.</div>
  <div class="row">Rounds to win <input id="srw" type="number" value="3" min="1" max="10" style="width:50px">
   Aggression RED <input id="sraggA" type="range" min="0" max="100" value="60" oninput="$('sraggAv').textContent=this.value+'%'"> <span id="sraggAv">60%</span>
   BLUE <input id="sraggB" type="range" min="0" max="100" value="60" oninput="$('sraggBv').textContent=this.value+'%'"> <span id="sraggBv">60%</span> (0 = safe space-seeking, 100 = hunt and cut off)
