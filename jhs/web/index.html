@@ -48,6 +48,19 @@
  <div class="row"><button id="startbtn" onclick="startRun()">Start</button><span id="startmsg"></span></div>
 </section>
 
+<section id="surroundsetup" style="display:none"><h2>2 · Set up the match (crab surround 1v1: light-cycle trails, CYBER, SIM-ONLY)</h2>
+ <div class="muted"><b>SIM-ONLY VISION CONCEPT.</b> Each crab lays a glowing trail along its real path; touching any trail or the outer wall loses the round (crab-to-crab bumps are harmless). Each crab sees only with its own simulated camera + dToF and knows its own pose.</div>
+ <div class="row">Rounds to win <input id="srw" type="number" value="3" min="1" max="10" style="width:50px">
+  Aggression <input id="sragg" type="range" min="0" max="100" value="60" oninput="$('sraggv').textContent=this.value+'%'"> <span id="sraggv">60%</span> (0 = safe space-seeking, 100 = hunt and cut off)
+  Openings <select id="sropen" onchange="$('srlock').style.display=this.value==='locked'?'':'none'"><option value="random">Random</option><option value="locked">Locked</option></select>
+  <span id="srlock" style="display:none">RED <select id="sropA"><option>STRAIGHT</option><option>SWEEP_LEFT</option><option>SWEEP_RIGHT</option><option>CUT_MID</option></select> BLUE <select id="sropB"><option>STRAIGHT</option><option>SWEEP_LEFT</option><option>SWEEP_RIGHT</option><option>CUT_MID</option></select></span>
+  openings seed <input id="sropseed" type="number" placeholder="new each match" style="width:110px">
+  Camera <select id="srcam"><option value="follow">Follow action</option><option value="fixed">Fixed overview</option></select></div>
+ <div class="row">Match length <select id="srtmax"><option value="300">5 min</option><option value="180">3 min</option><option value="600">10 min</option></select>
+  Speed <select id="srspeed"><option value="1">at most 1x real time</option><option value="0">as fast as possible</option></select>
+  match seed <input id="srseed" type="number" value="1" style="width:60px"> <label><input type="checkbox" id="srlive" checked> live picture</label>
+  <button id="srstart" onclick="srStart()">Start match</button> <span id="srmsg" class="muted"></span></div>
+</section>
 <section id="soccersetup" style="display:none">
  <h2 id="shead">2 · Set up the match (crab soccer 1v1)</h2>
  <div class="muted" id="sblurb"><b>SIM-ONLY VISION CONCEPT.</b> Each crab sees only with its own simulated camera + dToF and knows its own pose; the referee (goals, kickoff resets, drop-balls) uses sim truth. RED defends the red goal (left) and attacks right; BLUE the opposite.</div>
@@ -143,13 +156,14 @@ async function api(p,b){const r=await fetch(p,b===undefined?{}:{method:'POST',he
 function app(){return APPS.find(a=>a.path===$('appsel').value);}
 async function init(){INFO=await api('/api/info'); ROOM=await api('/api/room'); $('folder').value=INFO.movies; await loadApps(INFO.preselect); draw(); check(); runsList(); if(INFO.running){curRun=INFO.running; showLive();}}
 async function loadApps(sel){APPS=await api('/api/apps'); const s=$('appsel'); s.innerHTML='';
- for(const a of APPS){const o=document.createElement('option'); o.value=a.path; o.textContent=(a.ok?'':'✗ ')+a.name+(a.kind?'  ['+({hide_seek:'hide & seek, vision brain',tidy_vision:'tidy-up, vision brain',flybrain:'flybrain: fly-inspired rules, sim-only',official:'plain app: you drive',soccer:'crab soccer 1v1, two vision brains, sim-only',tanks:'crab tanks 1v1, turrets + slow shots, sim-only',ballroom:'moonlit ballroom, two crabs, your music'}[a.kind])+']':''); s.appendChild(o);}
+ for(const a of APPS){const o=document.createElement('option'); o.value=a.path; o.textContent=(a.ok?'':'✗ ')+a.name+(a.kind?'  ['+({hide_seek:'hide & seek, vision brain',tidy_vision:'tidy-up, vision brain',flybrain:'flybrain: fly-inspired rules, sim-only',official:'plain app: you drive',soccer:'crab soccer 1v1, two vision brains, sim-only',tanks:'crab tanks 1v1, turrets + slow shots, sim-only',surround:'crab surround 1v1, light-cycle trails, sim-only',ballroom:'moonlit ballroom, two crabs, your music'}[a.kind])+']':''); s.appendChild(o);}
  if(!sel){const hs=APPS.find(a=>a.kind==='hide_seek'&&a.local_hooks); if(hs) sel=hs.path;} if(sel) s.value=sel; s.onchange=appChanged; appChanged();}
 function appChanged(){const a=app(); if(!a){$('appinfo').textContent='no apps yet: load one';return;}
  $('appinfo').innerHTML=a.ok?`<b>${a.title}</b> · ${a.modes.length} modes · controller: ${a.controller}`+(a.sim_only?' · <span class="warn">SIM-ONLY VISION CONCEPT</span>':'')+(a.warning?`<br><span class="warn">${a.warning}</span>`:''):`<span class="err">${a.error}</span>`;
  const room=a.ok&&((a.kind==='hide_seek'&&a.local_hooks)||a.kind==='flybrain');
  $('setup').style.display=room?'':'none'; $('flynote').style.display=(a.kind==='flybrain')?'':'none';
  if(a.kind==='flybrain'&&$('tmax').dataset.kind!=='fly'){$('tmax').value='120';} if(a.kind!=='flybrain'&&$('tmax').dataset.kind==='fly'){$('tmax').value='600';} $('tmax').dataset.kind=a.kind==='flybrain'?'fly':'hs';
+ $('surroundsetup').style.display=(a.ok&&a.kind==='surround')?'':'none';
  TK=a.ok&&a.kind==='tanks'; const soc=a.ok&&(a.kind==='soccer'||TK); $('soccersetup').style.display=soc?'':'none'; $('tkopts').style.display=TK?'':'none'; $('scopts').style.display=TK?'none':''; $('splace').style.display=TK?'none':''; $('scanvas').style.pointerEvents=TK?'none':''; $('shead').textContent=TK?'2 · Set up the match (crab tanks 1v1: turrets, slow visible shots, SIM-ONLY)':'2 · Set up the match (crab soccer 1v1)';
  if(!$('sblurb').dataset.soccer) $('sblurb').dataset.soccer=$('sblurb').innerHTML;
  $('sblurb').innerHTML=TK?'<b>SIM-ONLY VISION CONCEPT.</b> Each crab sees only with its own simulated camera + dToF and knows its own pose. The match uses the selected Combat arena: both crabs start in that layout\'s pockets, and there are no extra obstacles.':$('sblurb').dataset.soccer;
@@ -256,6 +270,11 @@ async function sStart(){const a=app(); $('smsg').textContent='starting… (two c
  if(TK){sb.props={}; if(SF) tanksFixed(); sb.arena=($('tarena')&&$('tarena').value)||'simple'; sb.openings=tOpenings(); sb.camera=$('tcam').value;} else {delete sb.openings; delete sb.camera; delete sb.arena;}
  const r=await api('/api/start',{app:a.path,setup:sb,pushable:$('spush').checked,seed:+$('smseed').value,tmax:+$('stmax').value,speed:+$('sspeed').value,physics_hz:$('sphys').value?+$('sphys').value:null,live:$('slive').checked,goals_to_win:Math.max(1,Math.min(10,+$('sgoals').value||3)),hits_to_win:Math.max(1,Math.min(10,+$('thits').value||3)),bounce:$('tbounce').checked,aggression:{A:Math.max(0,Math.min(1,+$('saggA').value)),B:Math.max(0,Math.min(1,+$('saggB').value))}});
  if(!r.ok){$('smsg').innerHTML='<span class="err">'+(r.error||'failed')+'</span>';return;} $('smsg').textContent=''; curRun=r.run; showLive();}
+async function srStart(){const a=app(); $('srmsg').textContent='starting… (two crabs: the world takes ~40 s to build)';
+ const o={mode:$('sropen').value}; if(o.mode==='locked'){o.A=$('sropA').value;o.B=$('sropB').value;} const sd=$('sropseed').value; if(sd!=='') o.seed=+sd;
+ const r=await api('/api/start',{app:a.path,setup:{openings:o,camera:$('srcam').value,aggression:+$('sragg').value},seed:+$('srseed').value,tmax:+$('srtmax').value,speed:+$('srspeed').value,live:$('srlive').checked,
+   rounds_to_win:Math.max(1,Math.min(10,+$('srw').value||3)),aggression:+$('sragg').value});
+ if(!r.ok){$('srmsg').innerHTML='<span class="err">'+(r.error||'failed')+'</span>';return;} $('srmsg').textContent=''; curRun=r.run; showLive();}
 // ---------- run ----------
 function fillTunes(){const s=$('btune'); if(!s) return; const tunes=INFO.ballroom_tunes||[];
  if(s.dataset.ready!=='1'){s.innerHTML=''; for(const t of tunes){const o=document.createElement('option'); o.value=t.path; o.textContent=t.name; s.appendChild(o);}
@@ -287,7 +306,7 @@ async function tick(){const s=await api('/api/status?run='+encodeURIComponent(cu
  const im=new Image(); im.onload=()=>{$('live').src=im.src;}; im.src='/api/live.jpg?run='+encodeURIComponent(curRun)+'&t='+Date.now();
  let t; if(s.kind==='ballroom'){t=(s.title||'Moonlit Ballroom'); if(s.t!=null) t+=` · ${Math.floor(s.t/60)}:${String(Math.floor(s.t%60)).padStart(2,'0')}`; if(s.state) t+=` · ${s.state}`; if(s.rate) t+=` · ${(+s.rate).toFixed(2)}x`;}
  else {t=`sim t = ${s.t!=null?(+s.t).toFixed(1):'…'} s`; if(s.rate) t+=` · ${(+s.rate).toFixed(2)}x real time`; if(s.state) t+=` · ${s.state}`;}
- if((s.kind==='soccer'||s.kind==='tanks')&&s.ref) t+=` · referee (SIM TRUTH): ${s.ref}`;
+ if((s.kind==='soccer'||s.kind==='tanks'||s.kind==='surround')&&s.ref) t+=` · referee (SIM TRUTH): ${s.ref}`;
  if(s.kind==='fly'||s.kind==='flybrain'){if(s.sub) t+=` (${s.sub})`; if(s.counts) t+=' · '+Object.entries(s.counts).filter(([k,v])=>v).map(([k,v])=>k+' '+v).join(', ');}
  if(s.kind==='tidy_vision'&&s.ntoys) t+=` · crab thinks sorted ${s.gathered}/${s.ntoys} · scorer (SIM TRUTH, not used by the crab) ${s.n_truth}/${s.ntoys} in the right bin`;
  else if(s.ntoys) t+=` · crab's own count ${s.gathered}/${s.ntoys} · scorer (SIM TRUTH, not used by the crab) ${s.n_truth}/${s.ntoys}`;
@@ -312,7 +331,7 @@ async function rtick(){const p=await api('/api/render_status?out='+encodeURIComp
  if(p.finished){clearInterval(rpoll); $('reveal').style.display='';} else if(p.exit_code){clearInterval(rpoll); $('rmsg').innerHTML='<span class="err">rendering failed — see render_*.log in the run folder</span>';}}
 function reveal(){api('/api/reveal',{path:lastOut});}
 async function runsList(){const rs=await api('/api/runs'); if(!rs.length){$('runs').textContent='none yet';return;}
- let h='<table><tr><th>run</th><th>result (SIM TRUTH)</th><th></th></tr>'; for(const r of rs){const res=(r.result&&r.result.kind==='ballroom')?`ballroom: ${r.result.title||''} ${r.result.bpm?Math.round(r.result.bpm)+' bpm':''} ${r.result.t_end||''}s`:(r.result&&r.result.kind==='tanks')?`tanks: RED ${r.result.score.RED} - ${r.result.score.BLUE} BLUE, ${r.result.t_end} s`:(r.result&&r.result.kind==='soccer')?`soccer: RED ${r.result.score.RED} - ${r.result.score.BLUE} BLUE, ${r.result.t_end} s`:(r.result&&r.result.kind==='flybrain')?`flybrain: ${r.result.t_end} s, falls ${r.result.falls}, path ${r.result.path_m} m`:(r.result&&r.result.n_correct!=null)?`tidy: sorted ${r.result.n_correct}/${r.result.n_toys}, ${r.result.t_end} s`:r.result?`found ${r.result.n_found}/${r.result.n_toys}, on rug ${r.result.n_gathered}/${r.result.n_toys}, ${r.result.t_end} s`:(r.running?'running':'');
+ let h='<table><tr><th>run</th><th>result (SIM TRUTH)</th><th></th></tr>'; for(const r of rs){const res=(r.result&&r.result.kind==='ballroom')?`ballroom: ${r.result.title||''} ${r.result.bpm?Math.round(r.result.bpm)+' bpm':''} ${r.result.t_end||''}s`:(r.result&&r.result.kind==='surround')?`surround: RED ${r.result.score.RED} - ${r.result.score.BLUE} BLUE, ${r.result.t_end} s`:(r.result&&r.result.kind==='tanks')?`tanks: RED ${r.result.score.RED} - ${r.result.score.BLUE} BLUE, ${r.result.t_end} s`:(r.result&&r.result.kind==='soccer')?`soccer: RED ${r.result.score.RED} - ${r.result.score.BLUE} BLUE, ${r.result.t_end} s`:(r.result&&r.result.kind==='flybrain')?`flybrain: ${r.result.t_end} s, falls ${r.result.falls}, path ${r.result.path_m} m`:(r.result&&r.result.n_correct!=null)?`tidy: sorted ${r.result.n_correct}/${r.result.n_toys}, ${r.result.t_end} s`:r.result?`found ${r.result.n_found}/${r.result.n_toys}, on rug ${r.result.n_gathered}/${r.result.n_toys}, ${r.result.t_end} s`:(r.running?'running':'');
   h+=`<tr><td>${r.run}</td><td>${res}</td><td>${r.can_save_mp4?`<button class="sec" onclick="curRun='${r.run}';saveMp4('${r.run}')">Save as MP4</button>`:''}</td></tr>`;} $('runs').innerHTML=h+'</table>';}
 setup(); init().then(()=>{ if(location.search.includes('selftest=1')) selftest(); });
 // ?selftest=1 : drags a toy, the crab and a prop with synthetic pointer events and reports what the page decided (used by the Linux tests)

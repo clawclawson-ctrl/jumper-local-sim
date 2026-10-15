@@ -44,6 +44,7 @@ def main():
     ap.add_argument("--arena", choices=("open", "simple", "complex"), default=None,
                     help="tanks: Combat playfield (open field, simple maze, complex maze). Default: the simple maze")
     ap.add_argument("--rounds-to-win", type=int, default=3, choices=range(1, 11), metavar="1-10", help="surround: first to this many rounds wins (default 3)")
+    ap.add_argument("--surround-aggression", type=float, default=60.0, metavar="0-100", help="surround: 0 = safe space-seeking, 100 = hunt and cut off (default 60)")
     ap.add_argument("--goals-to-win", type=int, default=3, choices=range(1, 11), metavar="1-10", help="soccer: first to this many goals wins (default 3; --tmax is the cap)")
     ap.add_argument("--aggression", default="0.7,0.7", help="soccer: RED,BLUE aggression 0 (cautious) .. 1 (aggressive), default 0.7,0.7")
     ap.add_argument("--obstacles", type=int, metavar="SEED", help="soccer: a random (mirror-symmetric) obstacle layout from this seed")
@@ -249,8 +250,9 @@ def surround(a, info, audio):
     if a.camera: setup["camera"] = a.camera
     tmax = a.tmax or 300.0; seed = a.seed if a.seed is not None else (a.random if a.random is not None else 1)
     proc, rd = runner.start_surround(info["path"], setup=setup, seed=seed, tmax=tmax, speed=0.0 if a.uncapped else 1.0, live=not a.no_live,
-                                     physics_hz=a.physics or (200 if a.fast else None), rounds_to_win=a.rounds_to_win)
-    print(f"run folder: {rd}\n(SIM-ONLY VISION CONCEPT) crab surround, {tmax:.0f} sim-seconds, first to {a.rounds_to_win}", flush=True)
+                                     physics_hz=a.physics or (200 if a.fast else None), rounds_to_win=a.rounds_to_win,
+                                     aggression=a.surround_aggression)
+    print(f"run folder: {rd}\n(SIM-ONLY VISION CONCEPT) crab surround, {tmax:.0f} sim-seconds, first to {a.rounds_to_win}, aggression {a.surround_aggression:.0f}%", flush=True)
     try:
         last = 0
         while proc.poll() is None:

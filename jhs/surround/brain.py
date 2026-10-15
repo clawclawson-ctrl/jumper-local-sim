@@ -70,7 +70,8 @@ def bfs(free, src):
 
 
 class Brain:
-    def __init__(self, team, rng=None):
+    def __init__(self, team, rng=None, aggression=0.6):
+        self.aggr = float(min(1.0, max(0.0, aggression)))
         self.team = team; self.rng = rng or np.random.default_rng(0); self.op_name = ""
         self.counts = {"replans": 0, "cutoffs": 0, "fills": 0, "unspins": 0, "opp_sightings": 0, "trail_cells_seen": 0}
         self.reset(0.0)
@@ -133,11 +134,10 @@ class Brain:
         ov, seen = self.opp_guess(); oc = cell(ov)
         free = ~occ; free_all = free.copy()
         if self.opp is not None and self.t - self.opp_t < 1.0:          # the opponent's body + a step ahead are off-limits
-            for f in (0.0, 0.7):
-                q = self.opp + self.opp_v * f; free &= np.hypot(CX - q[0], CY - q[1]) > 0.5
+            free &= np.hypot(CX - self.opp[0], CY - self.opp[1]) > 0.35     # bumping is harmless; just do not plan through its body
         best = None; out = []; esc = None
         for i in range(NH):
-            h = yaw + (i - NH // 2) * 2 * math.pi / NH if False else 2 * math.pi * i / NH
+            h = 2 * math.pi * i / NH + (0.0 if self.team == "A" else math.pi)     # mirrored candidate order (fair ties)
             dirv = np.array([math.cos(h), math.sin(h)]); ok = True
             td = getattr(self, "tdir", None); td = yaw if td is None else td; q = me.copy(); c0 = cell(me)
             for n_ in range(16):                                            # probe the arc I would really walk (turn-rate limited)
@@ -161,27 +161,34 @@ class Brain:
             ref = getattr(self, 'tdir', None) if getattr(self, 'tdir', None) is not None else yaw
             turn = abs(wrap(h - ref))
             if turn > math.radians(100): continue                           # no hairpins back over my own wall
+            a = self.aggr
             if sep:      # sealed off from each other: fill my pocket, hug the walls (wall-follow keeps the pocket compact)
                 nb = ndimage.binary_dilation(~free, iterations=1)[end]
                 sc = reach * 1.0 + 1.0 * nb - 15.0 * turn
             else:
-                sc = (mine - theirs) + 0.35 * reach - 15.0 * turn
+                safe = (mine - theirs) + 0.35 * reach - 15.0 * turn
+                # HUNT: get ahead of the opponent's predicted path and lay my wall across it (shrinks its territory)
+                ex, ey = XS[end[0]], YS[end[1]]; vn = float(np.linalg.norm(self.opp_v))
+                ahead = self.opp_v / vn * 0.9 if vn > 0.05 else np.zeros(2)
+                tgt = ov + ahead if seen else ov
+                hunt = 0.5 * (mine - theirs) + 0.2 * reach - 300.0 * math.hypot(ex - tgt[0], ey - tgt[1]) - 8.0 * turn
+                sc = (1 - a) * safe + a * hunt
             sc += 6.0 * run
             if reach < 6: sc -= 500                                         # self-trap
             if self.opp is not None and self.t - self.opp_t < 2.0:          # head-on: predicted closest approach over the next 3 s
-                ts = np.linspace(0, 4.0, 17); q0 = self.opp + self.opp_v * (self.t - self.opp_t)
+                ts = np.linspace(0, 2.0, 9); q0 = self.opp + self.opp_v * (self.t - self.opp_t)
                 dm = float(np.min(np.hypot(me[0] + dirv[0] * 0.32 * ts - q0[0] - self.opp_v[0] * ts, me[1] + dirv[1] * 0.32 * ts - q0[1] - self.opp_v[1] * ts)))
-                if dm < 1.0: sc -= 500 * (1.0 - dm)
+                if dm < 0.45: sc -= 200 * (1 - a) * (0.45 - dm)                   # bumps are harmless: only a cautious crab shies away
             out.append((round(math.degrees(h)), round(sc, 1)))
             if best is None or sc > best[0]: best = (sc, h, sep, mine, theirs, reach)
         self.info = dict(cands=out, seen=seen)
         if best is None and esc is not None: return (-1e3, esc[1], True, 0, 0, 0)     # boxed in: the longest clear arc
         return best
 
-    def _drive(self, pose, h, speed=WALK, strafe=False):
+    def _drive(self, pose, h, speed=WALK, strafe=False, face=None):
         """omnidirectional: walk along h at once (a crab strafes; no stop-and-turn wobble), while the body turns toward h so the
         camera looks where I am going."""
-        x, y, yaw = pose; e = wrap(h - yaw); c, s = math.cos(yaw), math.sin(yaw)
+        x, y, yaw = pose; e = wrap((h if face is None else face) - yaw); c, s = math.cos(yaw), math.sin(yaw)
         dx, dy = math.cos(h), math.sin(h)
         vx, vy = (c * dx + s * dy) * speed, (-s * dx + c * dy) * speed
         p = {"ly": -float(np.clip(vx, -0.45, 0.45)), "lx": -float(np.clip(vy, -0.45, 0.45))}
@@ -193,7 +200,7 @@ class Brain:
         if self.opening is not None:
             while self.op_wps and np.linalg.norm(np.array(self.op_wps[0]) - me) < 0.3: self.op_wps.pop(0)
             near = self.opp is not None and t - self.opp_t < 0.5 and np.linalg.norm(self.opp - me) < 2.6
-            if not self.op_wps or t - self.op_t0 > 8.0 or near: self.opening = None
+            if not self.op_wps or t - self.op_t0 > 1.5 + 6.5 * (1 - self.aggr) or near: self.opening = None   # an aggressive crab leaves its opener early
             else:
                 wp = np.array(self.op_wps[0]); h = math.atan2(wp[1] - y, wp[0] - x)
                 occ = self.blocked(); probe = [cell(me + np.array([math.cos(h), math.sin(h)]) * r) for r in (0.3, 0.5)]
@@ -210,10 +217,14 @@ class Brain:
                 sc, h, sep, mine, theirs, reach = b; self.head = h
                 if sep: self.state = "fill"; self.sub = f"FILL own pocket ({reach} cells)"; self.counts["fills"] += 1
                 else:
-                    self.state = "cutoff" if mine > theirs else "race"
-                    self.sub = f"{'CUT OFF' if mine > theirs else 'RACE'}: mine {mine} vs theirs {theirs}"
+                    self.state = ("hunt" if self.aggr >= 0.5 else "cutoff") if mine > theirs else ("hunt" if self.aggr >= 0.5 else "race")
+                    self.sub = f"{'HUNT' if self.aggr >= 0.5 else 'CUT OFF' if mine > theirs else 'RACE'}: mine {mine} vs theirs {theirs} ({self.aggr:.0%})"
                     if mine > theirs: self.counts["cutoffs"] += 1
-        return self._guard(self._drive(pose, self._slew(self.head)), pose)
+        hd = self._slew(self.head); face = None
+        if self.aggr >= 0.5 and self.state == "hunt":            # a hunter keeps its camera on the opponent while it strafes to cut it off
+            ov, _ = self.opp_guess(); fa = math.atan2(ov[1] - y, ov[0] - x)
+            if abs(wrap(fa - hd)) < math.radians(80): face = fa
+        return self._guard(self._drive(pose, hd, face=face), pose)
 
     def _slew(self, h):
         """travel direction eases toward the plan at TURN_RATE (smooth curved trail, no hairpins)."""

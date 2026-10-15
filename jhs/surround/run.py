@@ -22,6 +22,7 @@ OUTD = Path(os.environ.get("VS_OUT", "surround_run")); OUTD.mkdir(parents=True, 
 SAVEVIS = os.environ.get("VS_SAVEVIS", "1") == "1"
 SETUP = json.load(open(os.environ["SR_SETUP"])) if os.environ.get("SR_SETUP") else {}
 ROUNDS_TO_WIN = max(1, min(10, int(os.environ.get("SR_ROUNDS", "3"))))
+AGGR = max(0.0, min(100.0, float(os.environ.get("SR_AGGR", "60"))))
 OPEN_CFG = dict(SETUP.get("openings") or {}); OPEN_CFG.setdefault("mode", "random")
 OPEN_SEED = int(OPEN_CFG["seed"]) if OPEN_CFG.get("seed") not in (None, "") else int.from_bytes(os.urandom(4), "little")
 ORNG = np.random.default_rng(OPEN_SEED)
@@ -139,7 +140,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
         mujoco.mj_forward(model, live)
         if hasattr(sim, "_gather"): sim._gather()
 
-    brains = {k: SB.Brain(k, np.random.default_rng(SEED * 31 + i)) for i, k in enumerate(("A", "B"))}
+    brains = {k: SB.Brain(k, np.random.default_rng(SEED * 31 + i), aggression=AGGR / 100) for i, k in enumerate(("A", "B"))}
     for k in ("A", "B"): brains[k].set_opening(ROUND[k], 0.0)
     OPEN_LOG = [dict(round=1, **{G.TEAM[k]: ROUND[k]["opener"] for k in ("A", "B")}, start={G.TEAM[k]: START[k] for k in ("A", "B")})]
     print("[openings] seed=%d mode=%s round 1: RED %s, BLUE %s" % (OPEN_SEED, OPEN_CFG["mode"], ROUND["A"]["opener"], ROUND["B"]["opener"]), flush=True)
@@ -150,7 +151,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
         HOOK = SurroundHook(sim=sim, outd=OUTD, dt=un.step_dt)
         HOOK.draw_cb = lambda mj, scn: FXD.draw(mj, scn, {k: tr.pts for k, tr in trails.items()})
         HOOK.trails = trails
-    print(f"[setup] surround seed={SEED} tmax={TMAX} A={START['A']} B={START['B']} rounds_to_win={ROUNDS_TO_WIN} cam {VW}x{VH} tof {tw}x{th}", flush=True)
+    print(f"[setup] surround seed={SEED} tmax={TMAX} A={START['A']} B={START['B']} rounds_to_win={ROUNDS_TO_WIN} aggression={AGGR:.0f}% cam {VW}x{VH} tof {tw}x{th}", flush=True)
     dt = float(un.step_dt); vis_every = max(1, round(VIS_DT / dt)); q_every = max(1, round(0.04 / dt))
     obs = env.get_observations(); step = 0
     score = {"A": 0, "B": 0}; events = []; falls = {"A": 0, "B": 0}; fallen = {"A": False, "B": False}
@@ -239,7 +240,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                         (tofA if k == "A" else tofB).append(rngs.astype(np.float16))
                     if HOOK is not None: HOOK.vision(k, img, rngs)
                 meta = dict(t=round(t, 2), clock=round(mt, 2), A=metas["A"], B=metas["B"], score=dict(score), ref=ref_line, final=final, banner=banner,
-                            rounds_to_win=ROUNDS_TO_WIN, round=round_no, round_t=round(max(0.0, t - round_t0), 1) if pending is None else 0.0)
+                            rounds_to_win=ROUNDS_TO_WIN, aggression=AGGR, round=round_no, round_t=round(max(0.0, t - round_t0), 1) if pending is None else 0.0)
                 if SAVEVIS: vis_meta.append(meta)
                 if HOOK is not None: HOOK.meta(meta)
             DUE["due"] = (step + 1) % vis_every == 0
@@ -311,7 +312,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
         truth.close()
         trail_rounds.append({k: [[round(v, 3) for v in p] for p in tr.pts] for k, tr in trails.items()})
         res = dict(kind="surround", label="SIM-ONLY VISION CONCEPT", seed=SEED, openings=dict(mode=OPEN_CFG["mode"], seed=OPEN_SEED, rounds=OPEN_LOG),
-                   tmax=TMAX, rounds_to_win=ROUNDS_TO_WIN, t_end=round(step * dt, 2), stopped=stopped, setup=dict(A=START["A"], B=START["B"]),
+                   tmax=TMAX, rounds_to_win=ROUNDS_TO_WIN, aggression=AGGR, t_end=round(step * dt, 2), stopped=stopped, setup=dict(A=START["A"], B=START["B"]),
                    score={"RED": score["A"], "BLUE": score["B"]}, rounds=rounds, returns=returns, match_clock_s=round(mt, 1),
                    max_spin_only_s={G.TEAM[k]: round(v, 1) for k, v in max_rot.items()}, max_standing_s={G.TEAM[k]: round(v, 1) for k, v in max_still.items()},
                    winner=G.TEAM.get(winner) if final else None, final=final, falls={"RED": falls["A"], "BLUE": falls["B"]},

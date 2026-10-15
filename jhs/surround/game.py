@@ -18,7 +18,6 @@ LAY_STEP = 0.10      # a new trail point every 10 cm of base travel (gait sway o
 BODY_R = 0.20        # referee contact radius: a trail/wall closer than this to the base centre touches a leg (half-span 0.25 minus gait)
 CRASH_R = BODY_R + TRAIL_W / 2
 OWN_GRACE = 0.70     # m of my own most recent trail that cannot be "hit" (it starts right behind my legs)
-CRAB_CRASH = 0.42    # two crab centres closer than this = head-on collision, both out
 ROUND_MAX = 120.0    # s: a round that runs this long ends as a draw (time backstop; the match clock is the other)
 TRAIL_RGBA = {"A": (1.0, 0.10, 0.85, 1.0), "B": (0.0, 0.95, 1.0, 1.0)}    # magenta (RED crab) / cyan (BLUE crab)
 NEON = {"A": "MAGENTA", "B": "CYAN"}
@@ -70,8 +69,7 @@ def check_crash(k, pose, trails, other_pose=None):
     for who, tr in trails.items():
         for a, b in tr.segments(OWN_GRACE if who == k else 0.0):
             if seg_dist(p, a, b) < CRASH_R: return "own trail" if who == k else f"{TEAM[who]} trail"
-    if other_pose is not None and math.hypot(p[0] - other_pose[0], p[1] - other_pose[1]) < CRAB_CRASH: return "head-on"
-    return None
+    return None                       # crab-to-crab contact is harmless (they may bump); other_pose kept for the call signature
 
 
 # ---- per-round openers (same menu + odds for both, mirrored for BLUE) ----
@@ -115,8 +113,8 @@ def unit():
     assert check_crash("B", (-0.5, 0.05, 1.57), {"A": tr}) == "RED trail"
     assert check_crash("A", (-0.5, 0.05, 1.57), {"A": tr}) == "own trail"
     assert check_crash("A", (FX - 0.1, 0, 0), {}) == "wall"
-    assert check_crash("A", (0, 0, 0), {}, (0.3, 0)) == "head-on"
-    out.append("crash: wall / own / other trail / head-on, own-trail grace")
+    assert check_crash("A", (0, 0, 0), {}, (0.3, 0)) is None
+    out.append("crash: wall / own / other trail, own-trail grace; crab-to-crab contact harmless")
     r = roll_round(np.random.default_rng(1)); assert set(r) == {"A", "B"}
     l = roll_round(np.random.default_rng(1), {"mode": "locked", "A": "CUT_MID"}); assert l["A"]["opener"] == "CUT_MID" and l["B"]["opener"] == "STRAIGHT"
     assert opener_waypoints("B", "STRAIGHT")[0][0] > 0; out.append("openers random/locked + mirrored")
