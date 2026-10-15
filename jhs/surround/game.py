@@ -117,6 +117,46 @@ def opener_waypoints(k, op):
     return [(s * x, s * y) for x, y in pts]
 
 
+
+# ---------------- round-limit tiebreak (referee, sim truth; a setting) ----------------
+TIEBREAK = os.environ.get("SR_TIEBREAK", "space")   # "space": at the round limit the crab owning clearly more reachable floor takes the round; "off": draw
+TIE_MARGIN = 0.15                                   # territories within 15% of each other stay a draw
+
+
+def territory(P, trails, cell=0.25):
+    """sim-truth Voronoi of reachable floor: for each crab, BFS over the floor minus walls and the OPPONENT's trail (own trail is
+    passable); a cell is mine when I reach it strictly first. Returns {"A": n, "B": n} in cells."""
+    import numpy as np
+    from collections import deque
+    nx, ny = int(2 * FX / cell), int(2 * FY / cell)
+    xs = -FX + cell * (np.arange(nx) + 0.5); ys = -FY + cell * (np.arange(ny) + 0.5)
+    floor = np.array([[F.outer_clear(x, y) > 0.12 for y in ys] for x in xs])
+    def blocked_by(k):
+        b = np.zeros((nx, ny), bool)
+        for (x, y) in trails[k].pts:
+            i, j = int((x + FX) / cell), int((y + FY) / cell)
+            b[max(0, i - 1):i + 2, max(0, j - 1):j + 2] |= np.hypot(xs[max(0, i - 1):i + 2, None] - x, ys[None, max(0, j - 1):j + 2] - y) < CRASH_R
+        return b
+    D = {}
+    for k in ("A", "B"):
+        o = "B" if k == "A" else "A"; free = floor & ~blocked_by(o)
+        d = np.full((nx, ny), 10 ** 6, np.int32); i, j = min(nx - 1, max(0, int((P[k][0] + FX) / cell))), min(ny - 1, max(0, int((P[k][1] + FY) / cell)))
+        free[i, j] = True; d[i, j] = 0; q = deque([(i, j)])
+        while q:
+            a, b = q.popleft()
+            for u, v in ((a + 1, b), (a - 1, b), (a, b + 1), (a, b - 1)):
+                if 0 <= u < nx and 0 <= v < ny and free[u, v] and d[u, v] > d[a, b] + 1: d[u, v] = d[a, b] + 1; q.append((u, v))
+        D[k] = d
+    return {"A": int(((D["A"] < D["B"]) & (D["A"] < 10 ** 6)).sum()), "B": int(((D["B"] < D["A"]) & (D["B"] < 10 ** 6)).sum())}
+
+
+def tiebreak(P, trails):
+    """the round-limit winner by territory (None = draw); returns (winner, territory)."""
+    if TIEBREAK != "space": return None, None
+    T = territory(P, trails); a, b = T["A"], T["B"]
+    if max(a, b) == 0 or abs(a - b) < TIE_MARGIN * max(a, b): return None, T
+    return ("A" if a > b else "B"), T
+
 def unit():
     out = []
     tr = Trail()
@@ -137,4 +177,9 @@ def unit():
     r = roll_round(np.random.default_rng(1)); assert set(r) == {"A", "B"}
     l = roll_round(np.random.default_rng(1), {"mode": "locked", "A": "CUT_MID"}); assert l["A"]["opener"] == "CUT_MID" and l["B"]["opener"] == "STRAIGHT"
     assert opener_waypoints("B", "STRAIGHT")[0][0] > 0; out.append("openers random/locked + mirrored")
+    tb = {"A": Trail(), "B": Trail()}                                   # tiebreak: BLUE's wall seals RED into a corner pocket
+    for y in [-FY + 0.05 * n for n in range(int(2 * FY / 0.05) + 1)]: tb["B"].pts.append((-FX + 1.5, y))
+    w_, T_ = tiebreak({"A": (-FX + 0.7, 0.0, 0.0), "B": (1.0, 0.0, 0.0)}, tb)
+    assert (w_ == "B" if TIEBREAK == "space" else w_ is None), (w_, T_)
+    out.append(f"round-limit tiebreak by territory {T_}")
     return out

@@ -22,13 +22,16 @@ NX, NY = int(round(2 * G.FX / CELL)), int(round(2 * G.FY / CELL))
 XS = -G.FX + CELL * (np.arange(NX) + 0.5); YS = -G.FY + CELL * (np.arange(NY) + 0.5)
 CX, CY = np.meshgrid(XS, YS, indexing="ij")
 CLEAR = 0.30                                   # leg clearance kept from walls and trails
-WALLS = np.vectorize(G.F.outer_clear)(CX, CY) < CLEAR + 0.08   # wall margin for planning (cells nearer than 0.38 m)
+WCLR = np.vectorize(G.F.outer_clear)(CX, CY)
+WALLS = WCLR < 0.18                            # hard wall cells for planning: only ~leg half-span (walls are harmless + strategic)
+WALL_PEN = np.clip((0.40 - WCLR) / 0.22, 0, 1)    # small soft near-wall cost (0..1 per cell), no hard margin
 HUE = {"A": (285, 325), "B": (168, 198)}       # trail hue windows: magenta (RED's trail), cyan (BLUE's trail)
 NH = 16
 SPIN_MAX = 3.0
 REPLAN = 0.4
-WALL_KEEP = 0.38                               # m: planner + drive keep the base this far from the outer wall (legs 0.25 + margin)
-TRAP = 40                                      # cells (0.25 m) ~ 2.5 m^2: below this my pocket is a trap
+WALL_KEEP = 0.22                               # m: planner + drive keep the base this far from the outer wall (legs 0.25 + margin)
+HP = [float(v) for v in os.environ.get("SR_HP", "20,2,300,200").split(",")]   # hunt weights: pin, territory, target, pin size
+TRAP = 28                                      # cells (0.25 m) ~ 2.5 m^2: below this my pocket is a trap
 ESC_S = 2.5                                    # s of escape walking before normal planning resumes
 TURN_RATE = 0.65                               # rad/s max change of travel direction: ~0.45 m turning radius at walking speed
                                                # (a tighter hairpin would bring my legs back onto my own fresh wall)
@@ -165,7 +168,7 @@ class Brain:
             ref = getattr(self, 'tdir', None) if getattr(self, 'tdir', None) is not None else yaw
             turn = abs(wrap(h - ref))
             if turn > math.radians(100) and not (self.escaping or getattr(self, 'free_turn', False)): continue    # smooth play; ESCAPE may double back (own trail is passable)
-            a = self.aggr
+            a = min(1.0, 0.25 + 1.0 * self.aggr)                            # stronger aggression effect (60% -> 0.85 hunt weight)
             if sep:      # sealed off from each other: fill my pocket, hug the walls (wall-follow keeps the pocket compact)
                 nb = ndimage.binary_dilation(~free, iterations=1)[end]
                 sc = reach * 1.0 + 1.0 * nb - 15.0 * turn
@@ -175,10 +178,11 @@ class Brain:
                 ex, ey = XS[end[0]], YS[end[1]]; vn = float(np.linalg.norm(self.opp_v))
                 ahead = self.opp_v / vn * 0.9 if vn > 0.05 else np.zeros(2)
                 tgt = ov + ahead if seen else ov
-                tgt = np.array([float(np.clip(tgt[0], -G.FX + 0.6, G.FX - 0.6)), float(np.clip(tgt[1], -G.FY + 0.6, G.FY - 0.6))])   # goals stay wall-clear
-                hunt = 0.5 * (mine - theirs) + 0.2 * reach - 300.0 * math.hypot(ex - tgt[0], ey - tgt[1]) - 8.0 * turn
+                tgt = np.array([float(np.clip(tgt[0], -G.FX + 0.25, G.FX - 0.25)), float(np.clip(tgt[1], -G.FY + 0.25, G.FY - 0.25))])   # goals clamped 0.25 m inside
+                pin = HP[0] * max(0, HP[3] - theirs)                         # opponent pocket (walls + my trail) shrinking toward a trap
+                hunt = HP[1] * (mine - theirs) + pin + 0.15 * reach - HP[2] * math.hypot(ex - tgt[0], ey - tgt[1]) - 8.0 * turn
                 sc = (1 - a) * safe + a * hunt
-            sc += 6.0 * run
+            sc += 6.0 * run - 6.0 * float(WALL_PEN[end])                 # small near-wall cost only
             if reach < 6: sc -= 500                                         # self-trap
             if self.opp is not None and self.t - self.opp_t < 2.0:          # head-on: predicted closest approach over the next 3 s
                 ts = np.linspace(0, 2.0, 9); q0 = self.opp + self.opp_v * (self.t - self.opp_t)
@@ -225,12 +229,10 @@ class Brain:
         def bad(h):
             d = np.array([math.cos(h), math.sin(h)])
             for r_ in (0.2, 0.35, 0.5):
-                q = me + d * r_; wq = G.F.outer_clear(*q)
-                if wq < CLEAR and wq < w0: return True
-                c = cell(q)
+                q = me + d * r_; c = cell(q)                       # walls are harmless: only the opponent trail hard-blocks
                 if self.opp_cells[c] and c != c0: return True
             return False
-        if not bad(h0): return cmd
+        if not bad(h0): return self._slide(cmd, pose)
         self.counts["safety"] = self.counts.get("safety", 0) + 1
         for k_ in range(1, 9):
             for sgn in (1, -1):
@@ -238,8 +240,20 @@ class Brain:
                 if not bad(h):
                     c, s_ = math.cos(yaw), math.sin(yaw); dx, dy = math.cos(h), math.sin(h)
                     out = dict(cmd); out["ly"] = -float((c * dx + s_ * dy) * sp); out["lx"] = -float((-s_ * dx + c * dy) * sp)
-                    self.sub = (self.sub + " · SAFETY steer")[:60]; return out
+                    self.sub = (self.sub + " · SAFETY steer")[:60]; return self._slide(out, pose)
         out = {k: v for k, v in cmd.items() if k not in ("lx", "ly")}; self.sub = (self.sub + " · SAFETY stop")[:60]; return out
+
+    def _slide(self, cmd, pose):
+        """walls: never drive INTO the wall within 0.5 m look-ahead; keep the along-wall part (wall hugging is legal)."""
+        x, y, yaw = pose; vxb, vyb = -cmd.get("ly", 0.0), -cmd.get("lx", 0.0); c, s_ = math.cos(yaw), math.sin(yaw)
+        wx, wy = c * vxb - s_ * vyb, s_ * vxb + c * vyb; sp = math.hypot(wx, wy)
+        if sp < 0.05: return cmd
+        q = (x + 0.5 * wx / sp, y + 0.5 * wy / sp)
+        if G.F.outer_clear(*q) >= WALL_KEEP or G.F.outer_clear(x, y) > 0.5: return cmd
+        nx, ny = G.outer_normal(x, y); d_in = wx * nx + wy * ny
+        if d_in >= 0: return cmd
+        k = min(1.0, max(0.0, (0.5 - G.F.outer_clear(x, y)) / 0.3)); wx, wy = wx - k * d_in * nx, wy - k * d_in * ny
+        out = dict(cmd); out["ly"] = -float(c * wx + s_ * wy); out["lx"] = -float(-s_ * wx + c * wy); return out
 
     def _decide(self, pose):
         x, y, yaw = pose; me = np.array([x, y]); t = self.t
@@ -301,10 +315,10 @@ class Brain:
             nx, ny = G.outer_normal(*me); return math.atan2(ny, nx), R0, 0      # inside the wall margin: first step straight away from it
         self.reach_hist.append((self.t, R0))
         old = [r for (tt, r) in self.reach_hist if self.t - tt >= 3.0]
-        shrink = bool(old) and R0 < 0.6 * old[-1] and R0 < 150
+        shrink = bool(old) and R0 < 0.45 * old[-1] and R0 < 90
         fwd = best[5] if best is not None else 0
-        closing = fwd < TRAP and R0 >= 2 * TRAP                          # the corridor ahead closes, but there is room elsewhere
-        if self.t - self.esc_until < 4.0: return None                   # cool-down: no escape ping-pong
+        closing = fwd < TRAP // 2 and R0 >= 3 * TRAP                          # the corridor ahead closes, but there is room elsewhere
+        if self.t - self.esc_until < 8.0: return None                   # cool-down: no escape ping-pong
         if not (R0 < TRAP or shrink or closing): return None
         cand = None
         for i in range(NH):
@@ -313,7 +327,7 @@ class Brain:
                 c = cell(me + d * r)
                 if not free[c] and c != cell(me): ok = False; break
             if not ok: continue
-            if WALLS[cell(me + d * 0.8)] or G.F.outer_clear(*(me + d * 0.8)) < WALL_KEEP: continue    # never escape into the wall margin
+            if WALLS[cell(me + d * 0.8)]: continue    # never escape into the wall margin
             R = self.reach_from(me + d * 0.8, free)
             if cand is None or R > cand[1]: cand = (h, R)
         if os.environ.get("SR_NO_ESCAPE") == "1": return None          # test switch (before/after comparisons)
@@ -391,11 +405,13 @@ def unit():
     w.head = 0.0; w.tdir = 0.0; w.tdir_t = 5.0; w.plan_t = -1e9
     for k in range(3): w.t = 5.0 + 0.5 * k; w.reach_hist.append((w.t - 4, 400)); w.decide(w.pose)
     assert w.counts["escapes"] >= 1 and math.cos(w.esc_h) < -0.5, (w.counts, math.degrees(w.esc_h))
-    sfb = Brain("A"); sfb.t = 1.0; sfb.pose = (3.0, 0.5, 0.0)          # regression (Mac, a2eee84): face-first walk at the wall, open floor
-    cmd = sfb._safety({"ly": -0.4, "lx": 0.0, "rx": 0.0}, sfb.pose); hh = math.atan2(-cmd.get("lx", 0), -cmd.get("ly", 0))
-    assert cmd.get("ly", 0) != -0.4 and G.F.outer_clear(3.0 + 0.5 * math.cos(hh), 0.5 + 0.5 * math.sin(hh)) >= CLEAR, cmd
+    sfb = Brain("A"); sfb.t = 1.0; sfb.pose = (3.2, 0.5, 0.0)          # regression (Mac, a2eee84): face-first walk at the wall, open floor
+    cmd = sfb._safety({"ly": -0.3, "lx": -0.3, "rx": 0.0}, sfb.pose)      # walls harmless: the into-wall part is dropped, the slide kept
+    assert -cmd["ly"] < 0.15 and -cmd["lx"] > 0.25, cmd
     q = sfb._safety({"ly": -0.4, "lx": 0.0}, (0.0, 0.0, 0.0)); assert q["ly"] == -0.4, "no change in open floor"
-    out.append("safety layer: a face-first walk into the wall is steered away; open floor untouched")
+    sfb.opp_cells[cell((0.4, 0.0))] = True; q = sfb._safety({"ly": -0.4, "lx": 0.0}, (0.0, 0.0, 0.0))
+    assert q.get("ly", 0) > -0.39 or abs(q.get("lx", 0)) > 0.1, q
+    out.append("safety layer: no face-first walk into the wall (slides along it); opponent trail ahead hard-blocks; open floor untouched")
     c = w._drive((3.3, 0.0, 0.0), 0.0); assert -c["ly"] < 0.05, c; out.append(f"escape from a wall pocket heads away ({math.degrees(w.esc_h):.0f} deg); wall reflex stops a push into the wall")
     b2 = Brain("B"); b2.pose = (0.0, 0.0, 0.0); b2.opp_cells[cell((1.3, 0.0))] = True; b2.opp_cells[cell((1.3, 0.25))] = True; b2.opp_cells[cell((1.3, -0.25))] = True
     best = b2.choose(b2.pose); assert best is not None and abs(wrap(best[1])) > 0.4, best; out.append("avoids a seen opponent trail")

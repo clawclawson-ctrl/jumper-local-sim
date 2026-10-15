@@ -272,7 +272,9 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                         alive = [k for k in ("A", "B") if out[k] is None]
                         end_round(t, "; ".join(f"{G.TEAM[k]} hit {v}" for k, v in hit.items()), alive[0] if len(alive) == 1 else None)
                     elif t - round_t0 > G.ROUND_MAX:
-                        end_round(t, "round time backstop", None)
+                        tw, terr = G.tiebreak(P, trails)
+                        how = "round time limit: " + (f"territory {terr['A']}-{terr['B']} cells" if terr else "draw")
+                        end_round(t, how, tw)
                 for k in ("A", "B"):
                     z = float(live.xpos[base[k]][2]); upz = float(live.xmat[base[k]].reshape(3, 3)[2, 2])
                     isf = (z < 0.04 or upz < 0.5) and t > 1.0
