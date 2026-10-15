@@ -113,6 +113,14 @@ def tanks():
     from jhs.tanks import arena as TA, brain as TB, field as TF
     return f"{a.name}: tanks; unit tests: " + "; ".join(TA.unit() + TB.unit() + TF.unit())
 item("crab tanks app + shots + brains (SIM-ONLY)", tanks)
+def surround():
+    a = ROOT / "apps" / "jumper_surround_vision.app"
+    if not a.exists(): return "apps/jumper_surround_vision.app not present (skipped)"
+    from jhs.apps import inspect as _insp
+    i = _insp(a); assert i["ok"] and i["kind"] == "surround", i
+    from jhs.surround import game as SG, brain as SB
+    return f"{a.name}: surround; unit tests: " + "; ".join(SG.unit() + SB.unit())
+item("crab surround app + trails + brains (SIM-ONLY)", surround)
 item("room v7 map", lambda: (ROOT / "maps" / "jumper-hide-seek-v7.map").stat().st_size)
 if "--full" in sys.argv:
     def world():

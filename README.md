@@ -21,6 +21,7 @@ Included apps (in `apps/`):
 | `jumper_hide_seek_vision.app` | Hide & seek. The crab searches the room with its (simulated) camera and pushes every toy it finds onto the rug. |
 | `jumper_soccer_vision.app` | Crab soccer 1v1. Two crabs (RED vs BLUE) each find the ball with their own simulated camera and push it into the other goal. Rounded, bouncy field walls; optional obstacles; the scorer celebrates, then a referee reset; choose *Goals to win* (1-10). |
 | `jumper_tanks_vision.app` | Crab Tanks 1v1, inspired by Atari's Combat (1977). Two crabs hunt each other with their own simulated cameras, aim independent turrets while walking, and fire slow, visible shots the other crab can see and dodge. Three Combat arenas; choose *Hits to win* (1-10). |
+| `jumper_surround_vision.app` | Crab Surround 1v1, inspired by Atari's Surround (1977) / light cycles, CYBER themed. Each crab leaves a low glowing wall (magenta / cyan) along its real path; touch any wall or trail and the round is lost, the last crab standing scores. Choose *Rounds to win* (1-10). |
 | `flybrain.app` | The crab wanders on its own, steered by hand-written fly-inspired rules: looming escape, avoidance, fixate/approach, optomotor turns, exploration saccades. No task and no score. |
 | `jumper_tidy_vision.app` | Experimental tidy-up vision brain in the tidy-up room. |
 | `jumper-tidy-up.app` | The official tidy-up sample (policies byte-identical to the official bundle), with no vision brain. You drive it yourself. |
@@ -110,6 +111,14 @@ copy in `prebuilt/` by itself.
 - A hit stuns the target for 1.5 s and scores a point. The shooter dances, both crabs walk back behind their barriers, and the first to N hits wins. The referee and scoring use sim truth. The crabs never read it.
 - The **camera follows the action** (zooming to keep both crabs and shots in frame), or set it to a fixed overview. MP4 export at 1x includes both crabs' cameras, the belief heatmap and the scoreboard.
 - Testing: unit tests plus short headless matches on several seeds and on every arena, with no leg bumps, no falls and no hits from a shot the crab had already seen. It's still experimental: shots are fairly rare, and full first-to-3 matches have only been watched a few times.
+
+### Crab Surround notes (SIM-ONLY VISION CONCEPT)
+
+- Inspired by Atari's **Surround** (1977) and light cycles, on the Crab Tanks open field (7.0 x 4.5 m), with a dark neon-grid floor, violet rim walls and neon-tinted crabs.
+- Each crab lays a **trail wall** (8 cm wide, 6 cm tall, a sim add-on drawn into every camera) along its actual curved path, 0.24 m behind its body in the direction of travel. Turning on the spot lays nothing. The referee (sim truth) ends a crab's round when a wall or any trail comes within 0.24 m of its centre. Your own newest 0.70 m doesn't count. A head-on meeting knocks both out, a round longer than 120 s is a draw, and trails clear between rounds.
+- Brain ([`jhs/surround/`](jhs/surround/)): its own trail comes from proprioception, and the opponent's trail from glowing pixels in its own camera plus the line between sightings. Every 0.4 s it scores 16 travel directions on a 0.25 m grid. It probes the real turn-limited arc (0.65 rad/s, so it never makes a hairpin) and needs room to keep turning. It then runs a **Voronoi race** against the opponent's predicted spot (line-fit velocity; when out of view, the Tanks "where it isn't" belief grid). It adds a self-trap check, a 4 s head-on prediction, and fills its own pocket once sealed off. Crabs walk omnidirectionally at normal walking speed.
+- A random per-round **opener** (straight, sweep left/right, cut to the middle) can be *Random* or *Locked* with a seed. Starts have a small jitter, and a 3 s spin watchdog runs. The follow camera has a Follow/Fixed toggle, like Tanks. The overlay uses compact insets (own cam with boxes, dToF depth, small top view) so the arena fills the frame.
+- `./run.sh --headless --app apps/jumper_surround_vision.app --seed 11 --rounds-to-win 3 [--camera fixed] [--openings locked --opener-red CUT_MID]`
 
 ### Moonlit ballroom
 
