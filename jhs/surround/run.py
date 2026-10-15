@@ -162,6 +162,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
     qbuf, qt, vis_meta, tofA, tofB, fxbuf, trail_rounds = [], [], [], [], [], [], []
     truth = open(OUTD / "truth.jsonl", "w"); t_wall = time.time(); stopped = False; t = 0.0; mt = 0.0
     cmds = {"A": {}, "B": {}}; poses = {k: (START[k][0], START[k][1], math.radians(START[k][2])) for k in ("A", "B")}
+    wall_hits = {"A": 0, "B": 0}; wall_prev = {"A": False, "B": False}
     rot_only = {"A": 0.0, "B": 0.0}; max_rot = {"A": 0.0, "B": 0.0}; still = {"A": 0.0, "B": 0.0}; max_still = {"A": 0.0, "B": 0.0}
     def ev(kind, **kw):
         e = dict(t=round(t, 2), event=kind, **kw); events.append(e); print(f"[ref] {e}", flush=True)
@@ -253,6 +254,10 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
             model, live = sim.env_mjdata(0)
             if step % 10 == 0:
                 P = {k: truth_pose(k) for k in ("A", "B")}
+                for k in ("A", "B"):                        # stat: wall contacts (walls are harmless)
+                    wc_ = G.wall_contact(P[k]) and pending is None
+                    if wc_ and not wall_prev[k]: wall_hits[k] += 1
+                    wall_prev[k] = wc_
                 if pending is None and t >= settle_until:
                     for k in ("A", "B"):
                         if out[k] is None: trails[k].lay(P[k])
@@ -316,6 +321,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                    score={"RED": score["A"], "BLUE": score["B"]}, rounds=rounds, returns=returns, match_clock_s=round(mt, 1),
                    max_spin_only_s={G.TEAM[k]: round(v, 1) for k, v in max_rot.items()}, max_standing_s={G.TEAM[k]: round(v, 1) for k, v in max_still.items()},
                    winner=G.TEAM.get(winner) if final else None, final=final, falls={"RED": falls["A"], "BLUE": falls["B"]},
+                   wall_contacts={G.TEAM[k]: v for k, v in wall_hits.items()}, round_max=G.ROUND_MAX,
                    brain_counts={G.TEAM[k]: dict(b.counts) for k, b in brains.items()}, wall_s=round(time.time() - t_wall, 1))
         json.dump(res, open(OUTD / "result.json", "w"), indent=1)
         with open(OUTD / "events.jsonl", "w") as f:

@@ -1,7 +1,7 @@
 """Crab Surround rules + trails + referee geometry (SIM-ONLY VISION CONCEPT). Pure functions, unit-tested.
 Arena: the Crab Tanks open field (7.0 x 4.5 m, rounded walls, no interior pieces). Each crab lays a low glowing wall behind
-it (a sim add-on: drawn into every camera, physics never touches it). Touching any wall or trail ends the round for that
-crab (a crab may walk over its OWN trail freely; only the opponent's trail and the outer wall count); the last crab standing scores. The referee is the only code that uses sim truth."""
+it (a sim add-on: drawn into every camera, physics never touches it). Only touching the OPPONENT's trail ends the round for that
+crab: a crab may walk over its own trail freely, and the outer wall is solid but harmless (it just blocks); the last crab standing scores. The referee is the only code that uses sim truth."""
 from __future__ import annotations
 import math, os
 os.environ.setdefault("TK_ARENA", "open")          # the tanks open field; must be set before jhs.tanks.* is imported
@@ -18,7 +18,7 @@ LAY_STEP = 0.10      # a new trail point every 10 cm of base travel (gait sway o
 BODY_R = 0.20        # referee contact radius: a trail/wall closer than this to the base centre touches a leg (half-span 0.25 minus gait)
 CRASH_R = BODY_R + TRAIL_W / 2
 OWN_GRACE = 0.70     # m of my own most recent trail that cannot be "hit" (it starts right behind my legs)
-ROUND_MAX = 120.0    # s: a round that runs this long ends as a draw (time backstop; the match clock is the other)
+ROUND_MAX = float(os.environ.get("SR_ROUND_MAX", "90"))   # s: a round that runs this long ends as a draw (setting; the match clock is the other cap)
 TRAIL_RGBA = {"A": (1.0, 0.10, 0.85, 1.0), "B": (0.0, 0.95, 1.0, 1.0)}    # magenta (RED crab) / cyan (BLUE crab)
 NEON = {"A": "MAGENTA", "B": "CYAN"}
 
@@ -56,6 +56,19 @@ class Trail:
     def length(self): return self.cum[-1] if self.cum else 0.0
 
 
+def wall_contact(pose):
+    """stat only (walls are harmless): a leg touches the outer wall."""
+    return F.outer_clear(pose[0], pose[1]) < BODY_R
+
+
+def outer_normal(x, y, h=0.02):
+    """unit vector away from the nearest point of the OUTER wall (no interior pieces in Surround)."""
+    gx = F.outer_clear(x + h, y) - F.outer_clear(x - h, y); gy = F.outer_clear(x, y + h) - F.outer_clear(x, y - h)
+    n = math.hypot(gx, gy)
+    if n < 1e-9: n = math.hypot(x, y) or 1.0; return -x / n, -y / n
+    return gx / n, gy / n
+
+
 def seg_dist(p, a, b):
     ax, ay = a; bx, by = b; dx, dy = bx - ax, by - ay; L = dx * dx + dy * dy
     t = 0.0 if L < 1e-12 else max(0.0, min(1.0, ((p[0] - ax) * dx + (p[1] - ay) * dy) / L))
@@ -65,7 +78,6 @@ def seg_dist(p, a, b):
 def check_crash(k, pose, trails, other_pose=None):
     """referee (sim truth): -> None or a reason string for crab k at pose."""
     p = pose[:2]
-    if F.outer_clear(*p) < BODY_R: return "wall"
     for who, tr in trails.items():
         if who == k: continue                 # rule: a crab may walk over its OWN trail freely
         for a, b in tr.segments(0.0):
@@ -119,9 +131,9 @@ def unit():
     assert check_crash("A", (1.0, 0.0, 0.0), {"A": tr}) is None, "own fresh trail must not count"
     assert check_crash("B", (-0.5, 0.05, 1.57), {"A": tr}) == "RED trail"
     assert check_crash("A", (-0.5, 0.05, 1.57), {"A": tr}) is None, "own trail is passable"
-    assert check_crash("A", (FX - 0.1, 0, 0), {}) == "wall"
+    assert check_crash("A", (FX - 0.1, 0, 0), {}) is None and wall_contact((FX - 0.1, 0, 0)), "walls are harmless"
     assert check_crash("A", (0, 0, 0), {}, (0.3, 0)) is None
-    out.append("crash: wall / opponent trail only; own trail passable; crab-to-crab contact harmless")
+    out.append("crash: opponent trail only; own trail passable; walls + crab contact harmless")
     r = roll_round(np.random.default_rng(1)); assert set(r) == {"A", "B"}
     l = roll_round(np.random.default_rng(1), {"mode": "locked", "A": "CUT_MID"}); assert l["A"]["opener"] == "CUT_MID" and l["B"]["opener"] == "STRAIGHT"
     assert opener_waypoints("B", "STRAIGHT")[0][0] > 0; out.append("openers random/locked + mirrored")
