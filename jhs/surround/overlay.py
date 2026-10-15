@@ -10,8 +10,13 @@ from . import game as G
 NC = {"A": (255, 40, 210), "B": (0, 240, 255)}          # neon magenta / cyan (trail colours)
 TN = {"A": "RED", "B": "BLUE"}
 DC = {"opponent": (255, 255, 90)}
-STATE = {"start": "ready", "opener": "OPENER", "cutoff": "CUT OFF", "race": "RACE", "hunt": "HUNT", "fill": "FILL POCKET", "trapped": "TRAPPED",
+STATE = {"start": "ready", "opener": "OPENER", "cutoff": "CUT OFF", "race": "RACE", "hunt": "HUNT", "escape": "ESCAPE!", "fill": "FILL POCKET", "trapped": "TRAPPED",
          "out": "OUT", "return": "WALKING BACK", "celebrate": "WINS ROUND", "paused": "round over", "referee": "referee", "over": "over"}
+
+
+def _ag(a):
+    if isinstance(a, dict): return f" · aggression R {a.get('A', 60):.0f}% / B {a.get('B', 60):.0f}%"
+    return f" · aggression {float(a):.0f}%"
 
 
 class SurroundOverlay:
@@ -71,7 +76,7 @@ class SurroundOverlay:
         d.rectangle([x0 - S(16), S(10), x0 + tot + S(16), S(92)], fill=(8, 0, 20, 185), outline=(255, 60, 200, 200), width=max(1, S(2)))
         self._glow(d, (x0, S(12)), a_, self.fb, NC["A"]); d.text((x0 + wa + S(30), S(12)), m_, font=self.fb, fill=(255, 255, 255))
         self._glow(d, (x0 + wa + wm + S(60), S(12)), b_, self.fb, NC["B"])
-        cl = f"round {meta.get('round', 1)} · {meta.get('round_t', 0):.0f} s · clock {clock} · first to {meta.get('rounds_to_win', 3)} · aggression {meta.get('aggression', 60):.0f}%"
+        cl = f"round {meta.get('round', 1)} · {meta.get('round_t', 0):.0f} s · clock {clock} · first to {meta.get('rounds_to_win', 3)}" + _ag(meta.get('aggression', 60))
         d.text((W // 2 - int(d.textlength(cl, font=self.f3)) // 2, S(66)), cl, font=self.f3, fill=(230, 220, 255))
         # compact crab insets: RED bottom-left, BLUE top-right
         self._cam(img, "A", meta.get("A"), camA, tofA, S(22), H - S(320))

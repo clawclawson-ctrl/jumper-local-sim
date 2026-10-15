@@ -228,7 +228,7 @@ class H(BaseHTTPRequestHandler):
                     proc, rd = runner.start_surround(info["path"], setup=b.get("setup"), seed=int(b.get("seed", 1)), tmax=float(b.get("tmax", 300)),
                                                      speed=float(b.get("speed", 1.0)), live=bool(b.get("live", True)), physics_hz=b.get("physics_hz"),
                                                      rounds_to_win=int(b.get("rounds_to_win", b.get("hits_to_win", 3))),
-                                                     aggression=float(b.get("aggression", 60)))
+                                                     aggression=float(b.get("aggression", 60)), aggression_red=b.get("aggression_red"), aggression_blue=b.get("aggression_blue"))
                 elif info.get("kind") == "tanks":
                     proc, rd = runner.start_tanks(info["path"], setup=b.get("setup"), seed=int(b.get("seed", 1)), tmax=float(b.get("tmax", 300)),
                                                   speed=float(b.get("speed", 1.0)), live=bool(b.get("live", True)), physics_hz=b.get("physics_hz"),

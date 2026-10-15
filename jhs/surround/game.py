@@ -1,7 +1,7 @@
 """Crab Surround rules + trails + referee geometry (SIM-ONLY VISION CONCEPT). Pure functions, unit-tested.
 Arena: the Crab Tanks open field (7.0 x 4.5 m, rounded walls, no interior pieces). Each crab lays a low glowing wall behind
 it (a sim add-on: drawn into every camera, physics never touches it). Touching any wall or trail ends the round for that
-crab; the last crab standing scores. The referee is the only code that uses sim truth."""
+crab (a crab may walk over its OWN trail freely; only the opponent's trail and the outer wall count); the last crab standing scores. The referee is the only code that uses sim truth."""
 from __future__ import annotations
 import math, os
 os.environ.setdefault("TK_ARENA", "open")          # the tanks open field; must be set before jhs.tanks.* is imported
@@ -67,9 +67,16 @@ def check_crash(k, pose, trails, other_pose=None):
     p = pose[:2]
     if F.outer_clear(*p) < BODY_R: return "wall"
     for who, tr in trails.items():
-        for a, b in tr.segments(OWN_GRACE if who == k else 0.0):
-            if seg_dist(p, a, b) < CRASH_R: return "own trail" if who == k else f"{TEAM[who]} trail"
+        if who == k: continue                 # rule: a crab may walk over its OWN trail freely
+        for a, b in tr.segments(0.0):
+            if seg_dist(p, a, b) < CRASH_R: return f"{TEAM[who]} trail"
     return None                       # crab-to-crab contact is harmless (they may bump); other_pose kept for the call signature
+
+
+def aggression_from_env(env):
+    """per-crab aggression (%) from SR_AGGR_A / SR_AGGR_B, falling back to SR_AGGR (both), default 60."""
+    base = float(env.get("SR_AGGR") or 60)
+    return {k: max(0.0, min(100.0, float(env.get("SR_AGGR_" + k) or base))) for k in ("A", "B")}
 
 
 # ---- per-round openers (same menu + odds for both, mirrored for BLUE) ----
@@ -111,10 +118,10 @@ def unit():
     assert check_crash("A", (math.sin(2.37), 1 - math.cos(2.37), 2.37), {"A": cv}) is None; out.append("curved path: own fresh wall not hit")
     assert check_crash("A", (1.0, 0.0, 0.0), {"A": tr}) is None, "own fresh trail must not count"
     assert check_crash("B", (-0.5, 0.05, 1.57), {"A": tr}) == "RED trail"
-    assert check_crash("A", (-0.5, 0.05, 1.57), {"A": tr}) == "own trail"
+    assert check_crash("A", (-0.5, 0.05, 1.57), {"A": tr}) is None, "own trail is passable"
     assert check_crash("A", (FX - 0.1, 0, 0), {}) == "wall"
     assert check_crash("A", (0, 0, 0), {}, (0.3, 0)) is None
-    out.append("crash: wall / own / other trail, own-trail grace; crab-to-crab contact harmless")
+    out.append("crash: wall / opponent trail only; own trail passable; crab-to-crab contact harmless")
     r = roll_round(np.random.default_rng(1)); assert set(r) == {"A", "B"}
     l = roll_round(np.random.default_rng(1), {"mode": "locked", "A": "CUT_MID"}); assert l["A"]["opener"] == "CUT_MID" and l["B"]["opener"] == "STRAIGHT"
     assert opener_waypoints("B", "STRAIGHT")[0][0] > 0; out.append("openers random/locked + mirrored")

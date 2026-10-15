@@ -194,7 +194,7 @@ def start_tanks(app, setup=None, seed=1, tmax=300.0, speed=1.0, live=True, live_
     return proc, rd
 
 
-def start_surround(app, setup=None, seed=1, tmax=300.0, speed=1.0, live=True, live_size=(1280, 720), physics_hz=None, rounds_to_win=3, aggression=60.0):
+def start_surround(app, setup=None, seed=1, tmax=300.0, speed=1.0, live=True, live_size=(1280, 720), physics_hz=None, rounds_to_win=3, aggression=60.0, aggression_red=None, aggression_blue=None):
     """1v1 Crab Surround (jhs/surround/run.py) on the Crab Tanks open field, CYBER themed. setup = {openings, camera}."""
     from .tanks import field as TF
     from .surround import game as G
@@ -209,12 +209,13 @@ def start_surround(app, setup=None, seed=1, tmax=300.0, speed=1.0, live=True, li
     env = base_env()
     env.update(VS_SEED=str(int(seed)), VS_OUT=str(rd), VS_TMAX=str(float(tmax)), VS_SAVEVIS="1", JHS_SPEED=str(float(speed)), SR_LIVE="1",
                JHS_LIVE="1" if live else "0", JHS_LIVE_DIR=str(rd / "live"), JHS_STOP=str(rd / "STOP"), SR_SETUP=str(rd / "setup.json"),
-               SR_ROUNDS=str(max(1, min(10, int(rounds_to_win)))), SR_AGGR=str(max(0.0, min(100.0, float(aggression)))), TK_ARENA="open", JHS_LIVE_W=str(live_size[0]), JHS_LIVE_H=str(live_size[1]))
+               SR_ROUNDS=str(max(1, min(10, int(rounds_to_win)))), SR_AGGR=str(max(0.0, min(100.0, float(aggression)))), SR_AGGR_A=str(max(0.0, min(100.0, float(aggression if aggression_red is None else aggression_red)))),
+               SR_AGGR_B=str(max(0.0, min(100.0, float(aggression if aggression_blue is None else aggression_blue)))), TK_ARENA="open", JHS_LIVE_W=str(live_size[0]), JHS_LIVE_H=str(live_size[1]))
     app_for_play = Path(info["path"])
     if os.environ.get("JHS_FORCE_LOCAL_CONTROLLER") == "1":
         app_for_play = strip_controller(app_for_play, rd / "app_local_controller.app")
     (rd / "local_run.json").write_text(json.dumps(dict(app=str(app_for_play), app_original=info["path"], scene=str(scene), kind="surround",
-                                                       setup=setup, seed=seed, tmax=tmax, rounds_to_win=int(rounds_to_win), aggression=float(aggression), physics_hz=physics_hz or 1000,
+                                                       setup=setup, seed=seed, tmax=tmax, rounds_to_win=int(rounds_to_win), aggression=dict(RED=float(aggression if aggression_red is None else aggression_red), BLUE=float(aggression if aggression_blue is None else aggression_blue)), physics_hz=physics_hz or 1000,
                                                        speed=speed, started=time.strftime("%Y-%m-%d %H:%M:%S"), info=info), indent=1))
     cmd = [sys.executable, str(PKG / "surround" / "run.py"), "--app", str(app_for_play), "--scene", str(scene),
            "--backend", "native", "--device", "cpu", "--headless", "--steps", "999999999"]
