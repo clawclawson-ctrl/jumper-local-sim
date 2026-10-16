@@ -345,7 +345,9 @@ def save_mp4(run_dir, out=None, size="1080", folder=None, audio=None):
         if (rd / "result.json").exists(): r = json.loads((rd / "result.json").read_text())
         info = json.loads((rd / "local_run.json").read_text()) if (rd / "local_run.json").exists() else {}
         kind = r.get("kind") or info.get("kind")
-        if kind == "surround":
+        if kind == "warlords":
+            sc = r.get("score") or {}; out = folder / f"jumper-warlords-{rd.name}-RED{sc.get('RED', 0)}-BLUE{sc.get('BLUE', 0)}-GREEN{sc.get('GREEN', 0)}-1x-{size}p.mp4"
+        elif kind == "surround":
             sc = r.get("score") or {}; out = folder / f"jumper-surround-{rd.name}-RED{sc.get('RED', 0)}-BLUE{sc.get('BLUE', 0)}-1x-{size}p.mp4"
         elif kind == "tanks":
             sc = r.get("score") or {}; out = folder / f"jumper-tanks-{rd.name}-RED{sc.get('RED', 0)}-BLUE{sc.get('BLUE', 0)}-1x-{size}p.mp4"

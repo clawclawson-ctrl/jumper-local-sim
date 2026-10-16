@@ -276,6 +276,7 @@ def warlords(a, info, audio):
     r = json.loads(rp.read_text())
     print(f"warlords result (referee, SIM TRUTH): {r.get('final') or 'stopped'} -- {r['score']} at {r['t_end']} s; bricks broken {r['bricks_broken']}; rounds "
           + "; ".join(f"R{x['round']} {x['winner'] or 'draw'} ({x['how']}, {x['t']} s)" for x in r["rounds"]) + f"; falls {r['falls']}; max spin {r['max_spin_only_s']}")
+    if a.mp4 or a.mp4_folder: render(rd, a, audio)
 
 
 def surround(a, info, audio):

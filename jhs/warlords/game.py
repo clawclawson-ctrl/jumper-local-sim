@@ -80,13 +80,16 @@ def _fillets():
     return out
 FILLETS = _fillets()
 CORNER_C = {k: VERT[k] - 2 * CORNER_R * U[k] for k in KEYS}
+_UK = np.array([U[k] for k in KEYS])
 
 
 def field_cn(P):
     """vectorised: clearance of points P (n, 2) to the arena's fixed stone (triangle walls, rounded corners, junction fillets)
     and the inward unit normal there. Behind a fillet (the sealed wedge) the clearance is negative."""
-    P = np.atleast_2d(np.asarray(P, float)); UK = np.array([U[k] for k in KEYS])
+    P = np.atleast_2d(np.asarray(P, float)); UK = _UK
     c = P @ UK.T + R_IN; j = np.argmin(c, 1); best = c[np.arange(len(P)), j]; nrm = UK[j].copy()
+    if len(P) == 1 and best[0] > 1.0: return best, nrm      # fast path: corners / fillets lie within 0.45 m of a wall, so the true
+                                                            # clearance here is >= 0.55 m (every caller's threshold is below that)
     for k in KEYS:
         r = (P - VERT[k]) @ U[k] > -1.5 * CORNER_R
         if r.any():
@@ -101,6 +104,37 @@ def field_cn(P):
         cc = np.where(inside, side, dn); nn = np.where(inside[:, None], nf[None, :], D / dn[:, None])
         m = cc < best; best[m] = cc[m]; nrm[m] = nn[m]
     return best, nrm
+
+
+_FIL = []
+def _fil_prep():
+    for (k, j, A, B) in FILLETS:
+        AB = B - A; L2 = float(AB @ AB); nf = np.array([-AB[1], AB[0]]) / math.sqrt(L2)
+        if (-A) @ nf < 0: nf = -nf
+        _FIL.append((float(A[0]), float(A[1]), float(AB[0]), float(AB[1]), L2, float(nf[0]), float(nf[1])))
+_fil_prep()
+_UKL = [(float(U[k][0]), float(U[k][1])) for k in KEYS]
+_VC = [(float(VERT[k][0]), float(VERT[k][1]), float(U[k][0]), float(U[k][1]), float(CORNER_C[k][0]), float(CORNER_C[k][1])) for k in KEYS]
+
+
+def field_cs(x, y):
+    """scalar field_cn for one point (pure python: the predictor / brain call it a lot) -> (clearance, (nx, ny))."""
+    best = 1e9; n = (0.0, 0.0)
+    for ux, uy in _UKL:
+        c = x * ux + y * uy + R_IN
+        if c < best: best = c; n = (ux, uy)
+    if best > 1.0: return best, n
+    for vx, vy, ux, uy, cx, cy in _VC:
+        if (x - vx) * ux + (y - vy) * uy > -1.5 * CORNER_R:
+            dx, dy = x - cx, y - cy; dn = max(math.hypot(dx, dy), 1e-9); c = CORNER_R - dn
+            if c < best: best = c; n = (-dx / dn, -dy / dn)
+    for ax, ay, bx, by, L2, nx, ny in _FIL:
+        s_ = ((x - ax) * bx + (y - ay) * by) / L2
+        if 0 < s_ < 1: c = (x - ax) * nx + (y - ay) * ny; nn = (nx, ny)
+        else:
+            s_ = min(max(s_, 0.0), 1.0); dx, dy = x - ax - s_ * bx, y - ay - s_ * by; dn = max(math.hypot(dx, dy), 1e-9); c = dn; nn = (dx / dn, dy / dn)
+        if c < best: best = c; n = nn
+    return best, n
 
 
 def kick_acc(P):
@@ -145,8 +179,11 @@ def unreachable_spots(step=0.15):
     return bad
 
 
-def field_clear(x, y): return float(field_cn(np.array([[x, y]]))[0][0])
-def field_normal(x, y): return field_cn(np.array([[x, y]]))[1][0]
+def field_clear(x, y): return field_cs(x, y)[0]
+def field_normal(x, y): return np.array(field_cs(x, y)[1])
+def kick1(p):
+    c, n = field_cs(p[0], p[1])
+    return np.array(n) * KICK_A if 0 < c < BALL_R + KICK_W else np.zeros(2)
 
 
 def tri_normal(x, y):
@@ -218,8 +255,8 @@ def rest_e(p, castles=None):
 
 def wall_at(p, castles=None):
     """the solid things a ball can bounce off at p: (clearance, inward normal). Walls + intact bricks + kings."""
-    c_, n_ = field_cn(np.array([p]))
-    best = (float(c_[0]), n_[0])
+    c_, n_ = field_cs(float(p[0]), float(p[1]))
+    best = (c_, np.array(n_))
     if castles is not None:
         for k in KEYS:
             K = king(k)
@@ -239,7 +276,7 @@ def predict_ball(p, v, horizon, castles=None, step=0.05):
     -> list of (t, p, v)."""
     p = np.array(p, float); v = np.array(v, float); t = 0.0; out = []
     while t < horizon - 1e-9:
-        v = v + kick_acc(p[None])[0] * step                    # kick strip at the wall foot
+        v = v + kick1(p) * step                    # kick strip at the wall foot
         sp = float(np.linalg.norm(v))
         if sp < 1e-3: out.append((t, p.copy(), v.copy())); break
         v = v * max(0.0, sp - BALL_DECEL * step) / sp; q = p + v * step
@@ -321,7 +358,7 @@ def ball_step(p, v, dt, crabs, castles, crab_v=None, e_crab=0.6):
 def _ball_step(p, v, dt, crabs, castles, crab_v=None, e_crab=0.6):
     """advance the ball dt: deceleration, crab pushes (disc BODY_R; the ball takes the crab's normal speed), walls/bricks.
     -> p, v, broken [(k, i)], king_hit k|None."""
-    p = np.array(p, float); v = np.array(v, float) + kick_acc(np.array([p]))[0] * dt
+    p = np.array(p, float); v = np.array(v, float) + kick1(p) * dt
     sp = float(np.linalg.norm(v))
     if sp > 1e-6: v = v * max(0.0, sp - BALL_DECEL * dt) / sp
     for j, (c, cv) in enumerate(zip(crabs, crab_v or [np.zeros(2)] * len(crabs))):
