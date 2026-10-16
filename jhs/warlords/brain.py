@@ -11,7 +11,7 @@ from collections import deque
 import numpy as np
 from . import game as G
 
-WALK, PUSH = 0.45, 0.42             # stick (x0.8 m/s): ~0.36 m/s walking
+WALK, PUSH = 0.45, 0.60             # stick (x0.8 m/s): ~0.36 m/s walking, ~0.48 m/s pushing the ball (more king hits, fewer timeouts)
 GUARD = G.castle_zone("A") + 0.42   # guard ring radius around my king (front face of the bricks + body + margin)
 SPIN_MAX = 4.0
 DEF_H = float(__import__('os').environ.get('WL_DEF_H', '2.5'))   # s: defend against threats this soon
