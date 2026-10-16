@@ -13,7 +13,7 @@ def theme(model):
         if int(model.tex_type[t]) == int(mujoco.mjtTexture.mjTEXTURE_SKYBOX):
             a = model.tex_adr[t]; nb = model.tex_width[t] * model.tex_height[t] * model.tex_nchannel[t]
             px = model.tex_data[a:a + nb].reshape(-1, model.tex_nchannel[t]); px[:, :3] = (px[:, :3].astype(float) * [0.25, 0.18, 0.14]).astype(px.dtype)
-    model.vis.headlight.ambient[:] = [0.42, 0.38, 0.33]; model.vis.headlight.diffuse[:] = [0.45, 0.40, 0.34]
+    model.vis.headlight.ambient[:] = [0.50, 0.49, 0.47]; model.vis.headlight.diffuse[:] = [0.55, 0.54, 0.52]   # near-neutral: the white ball stays white to the cameras
     n = 0
     for g in range(model.ngeom):
         name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g) or ""

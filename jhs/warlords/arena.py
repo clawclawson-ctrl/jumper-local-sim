@@ -8,7 +8,7 @@ from pathlib import Path
 from . import game as G
 
 STONE_FLOOR = "0.30 0.28 0.25 1"
-WALL_RGBA = "0.46 0.43 0.38 1"
+WALL_RGBA = "0.34 0.27 0.20 1"     # warm dark stone: saturated + dim enough that the white-ball detector never merges the ball with a wall behind it
 BRICK_RGBA = {"A": "0.62 0.36 0.30 1", "B": "0.36 0.42 0.60 1", "C": "0.38 0.55 0.36 1"}
 KING_RGBA = {"A": "0.95 0.20 0.10 1", "B": "0.20 0.40 1.00 1", "C": "0.15 0.85 0.25 1"}
 
@@ -55,14 +55,14 @@ def build(src_map, dst_map):
                 _g(field, f"wl_torch_{k}{'p' if sgn > 0 else 'm'}", type="sphere", pos=f"{T[0]:.3f} {T[1]:.3f} 0.30", size="0.035",
                    rgba="1.0 0.62 0.15 1", contype="0", conaffinity="0", group="1")
                 ET.SubElement(wb, "light", {"name": f"wl_torchlight_{k}{'p' if sgn > 0 else 'm'}", "pos": f"{T[0]:.3f} {T[1]:.3f} 0.6", "dir": "0 0 -1",
-                                            "diffuse": "0.45 0.30 0.12", "specular": "0.05 0.04 0.02", "attenuation": "1 0.1 0.25", "castshadow": "false"})
+                                            "diffuse": "0.22 0.15 0.07", "specular": "0.05 0.04 0.02", "attenuation": "1 0.1 0.25", "castshadow": "false"})
         for g in wb.iter("geom"):
             if g.get("name") == "ground": g.set("rgba", STONE_FLOOR)
         for b in wb.iter("body"):
             if b.get("name") == "prop:football":
                 b.set("pos", f"0 0 {G.BALL_R + 0.003:.3f}")
                 for x in b.iter("geom"):
-                    if x.get("name") == "prop:football_geom_geom": x.set("friction", "0.4 0.003 0.0004")   # low rolling friction
+                    if x.get("name") == "prop:football_geom_geom": x.set("friction", "0.4 0.003 0.0002")   # low rolling friction
         for m in root.find("asset"):
             if m.get("name") == "shelf_maze_appearance_floor": m.set("rgba", STONE_FLOOR)
         root.set("model", "jumper-warlords")

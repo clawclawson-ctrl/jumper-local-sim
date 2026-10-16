@@ -202,6 +202,8 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                         p = perceive(k, img, selfm, live.cam_xpos[c_id].copy(), live.cam_xmat[c_id].reshape(3, 3).copy(), cam)
                         br.observe(t, p, pose)
                         if HOOK is not None: HOOK.vision(k, img, rngs)
+                        if os.environ.get("WL_DUMP") and step % (vis_every * 10) == 0:
+                            (OUTD / "vis").mkdir(exist_ok=True); imageio.imwrite(OUTD / "vis" / f"{k}_{t:06.1f}.jpg", img, quality=88)
                     else: p = dict(ball=[], crabs=[])
                     playing = pending is None and out[k] is None and t >= settle_until
                     if playing:

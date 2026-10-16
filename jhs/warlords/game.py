@@ -24,10 +24,10 @@ HOME_D = 2.60                                # crab start: this far from its cor
 BALL_R = 0.065
 BODY_R = 0.24                                # crab footprint radius for the kinematic model + clearances (legs reach 0.236 m)
 CLEAR = 0.30                                 # leg clearance from walls / bricks / kings
-BALL_DECEL = float(os.environ.get("WL_BALL_DECEL", "0.03"))   # m/s^2: low-friction ball (rolls for a long time)
+BALL_DECEL = float(os.environ.get("WL_BALL_DECEL", "0.015"))   # m/s^2: low-friction ball (rolls for a long time)
 WALL_E = 0.85                                # wall / brick restitution (bouncy walls)
-SERVE_V = 0.45                               # m/s: the referee's serve from the centre (slow: walking crabs ~0.3 m/s can intercept)
-STALL_S = 8.0                                # ball slower than 0.04 m/s for this long -> the referee re-serves from the centre
+SERVE_V = 0.70                               # m/s: the referee's serve from the centre (slow: walking crabs ~0.3 m/s can intercept)
+STALL_S = 4.0                                # ball slower than 0.04 m/s for this long -> the referee re-serves from the centre
 ROUND_MAX = float(os.environ.get("WL_ROUND_MAX", "150"))
 CASTLE_RGBA = {"A": (0.85, 0.15, 0.10, 1.0), "B": (0.15, 0.30, 0.90, 1.0), "C": (0.10, 0.65, 0.20, 1.0)}
 # eliminated crab: it leaves the field (the referee parks it outside the walls); its castle REMAINS (bricks + king stay as obstacles).
