@@ -257,7 +257,7 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": True})
             if u.path == "/api/save_mp4":
                 d = run_dir(b["run"])
-                if not runner.run_state(d)["can_save_mp4"]: return self._send(400, {"error": "this run has no recording to render (still running, or not a hide & seek / flybrain / soccer run)"})
+                if not runner.run_state(d)["can_save_mp4"]: return self._send(400, {"error": "this run has no recording to render (still running, or not a recordable run)"})
                 folder = b.get("folder") or str(runner.DEFAULT_MOVIES)
                 audio = b.get("audio") or None
                 if audio and audio.get("path"):

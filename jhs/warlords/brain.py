@@ -118,7 +118,7 @@ class Brain:
         slow = bv is not None and float(np.linalg.norm(bv)) < 0.25
         if b is not None and enemies and (np.linalg.norm(b - self.H) < reach or np.linalg.norm(b - me) < 0.8 or (slow and np.linalg.norm(b - me) < 3.5)):
             tgt = min(enemies, key=lambda k: (self.scoreboard.get(k, 26), np.linalg.norm(G.king(k) - b)))
-            aim = self.gap_aim(tgt) + G.rot(self.team) @ self.jit; d = unitv(aim - b)
+            aim = self.gap_aim(tgt) + G.rot(self.team) @ self.jit; d = self.stage_dir(b, unitv(aim - b))
             behind = b - (G.BODY_R + G.BALL_R + 0.10) * d
             rel = me - b; along = rel @ d; lat = abs(rel[0] * d[1] - rel[1] * d[0])
             self.state = "attack"; self.counts["attacks"] += 1; self.target = tgt
@@ -141,6 +141,18 @@ class Brain:
             if np.linalg.norm(pk - me) < 1.2: return self._go(pose, me, face=pk) if abs(wrap(math.atan2(*(pk - me)[::-1]) - yaw)) > 0.4 else self._go(pose, gp, face=pk)
             return self._go(pose, gp, face=pk)
         self.sub = "HOLD guard spot"; return self._go(pose, g, face=b)
+
+    def stage_dir(self, b, u0):
+        """push direction for the ball at b (ported from soccer): toward the target, turned off the walls / fillets / castles
+        when no crab fits on the staging spot behind the ball."""
+        best, bs = u0, -1e9
+        for da in (0.0, 0.35, -0.35, 0.7, -0.7, 1.05, -1.05, 1.4, -1.4, 1.75, -1.75, 2.1, -2.1, 2.45, -2.45, 2.8, -2.8):   # up to "bank it off the wall"
+            ca, sa = math.cos(da), math.sin(da); u = np.array([ca * u0[0] - sa * u0[1], sa * u0[0] + ca * u0[1]])
+            S = b - u * (G.BODY_R + G.BALL_R + 0.10)
+            if obstacle(S)[0] < G.CLEAR: continue
+            sc = float(u @ u0) - 0.05 * abs(da)
+            if sc > bs: bs, best = sc, u
+        return best
 
     def gap_aim(self, k):
         """aim point on castle k: its king, through the widest gap of broken bricks when there is one (public scoreboard)."""
@@ -228,4 +240,12 @@ def unit():
         c = bb._decide(pose); gs.append(R.T @ bb.bel.peak()[0]); assert bb.sub.startswith("SEARCH"), bb.sub
     assert np.allclose(gs[0], gs[1], atol=0.3) and np.allclose(gs[0], gs[2], atol=0.3), gs
     out.append("ball out of view: SEARCH heads for the ball-belief peak (3-way symmetric)")
+    # ball against a wall: the staging spot behind it is inside the field with leg clearance (soccer's stage_dir)
+    sb = Brain("A"); nb = 0
+    for q in G.wall_release_points(step=0.5):
+        for tg in ("B", "C"):
+            u = sb.stage_dir(np.array(q), unitv(sb.gap_aim(tg) - np.array(q))); S = np.array(q) - u * (G.BODY_R + G.BALL_R + 0.10)
+            nb += obstacle(S)[0] < G.CLEAR - 0.05
+    assert nb == 0, nb
+    out.append("ball on a wall / fillet -> staging spot inside the field with leg clearance")
     return out

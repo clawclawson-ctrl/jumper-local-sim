@@ -76,7 +76,7 @@ class WarlordsOverlay:
         x = x0
         for (p, c), w in zip(parts, ws): d.text((x, S(12)), p, font=self.fb, fill=c); x += w + gap
         ag = meta.get("aggression", {})
-        cl = f"round {meta.get('round', 1)} · {meta.get('round_t', 0):.0f} s · clock {clock} · first to {meta.get('rounds_to_win', 3)} · aggr " + "/".join(f"{ag.get(k, 60):.0f}" for k in G.KEYS)
+        rt = int(meta.get('round_t', 0)); cl = f"round {meta.get('round', 1)} · {rt // 60}:{rt % 60:02d} · clock {clock} · first to {meta.get('rounds_to_win', 3)} · aggr " + "/".join(f"{ag.get(k, 60):.0f}" for k in G.KEYS)
         d.text((W // 2 - int(d.textlength(cl, font=self.f3)) // 2, S(58)), cl, font=self.f3, fill=(240, 230, 210))
         pos = {"A": (S(20), H - S(250)), "B": (W - S(20) - S(310), H - S(250)), "C": (W - S(20) - S(310), S(118))}
         for k in G.KEYS: self._cam(img, k, meta.get(k), (cams or {}).get(k), (tofs or {}).get(k), *pos[k])

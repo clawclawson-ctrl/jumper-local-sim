@@ -61,7 +61,8 @@
   Ball speed <select id="wlball"><option value="1.6">Fast (1.6 m/s, default)</option><option value="2.2">Very fast (2.2 m/s)</option><option value="1.0">Medium (1.0 m/s)</option><option value="0.7">Slow (0.7 m/s, old)</option></select>
   <label title="sim setting: a crab walking into the ball kicks it like a heavy elastic paddle (ball leaves at up to 2x the crab's real walking speed)"><input type="checkbox" id="wlpaddle" checked> paddle boost</label>
   Camera <select id="wlcam"><option value="follow">Follow action</option><option value="fixed">Fixed overview</option></select></div>
- <div class="row">Match length <select id="wltmax"><option value="300">5 min</option><option value="180">3 min</option><option value="600">10 min</option></select>
+ <div class="row">Match length <select id="wltmax"><option value="300">5 min</option><option value="60">1 min</option><option value="180">3 min</option><option value="600">10 min</option><option value="900">15 min</option><option value="1200">20 min</option><option value="1500">25 min</option></select>
+  Round time limit <select id="wlrmax"><option value="150">2:30 (default)</option><option value="60">1 min</option><option value="300">5 min</option><option value="600">10 min</option><option value="900">15 min</option><option value="1500">25 min</option></select> (then most bricks left wins the round)
   Speed <select id="wlspeed"><option value="1">at most 1x real time</option><option value="0">as fast as possible</option></select>
   match seed <input id="wlseed" type="number" value="1" style="width:60px"> <label><input type="checkbox" id="wllive" checked> live picture</label>
   <button id="wlstart" onclick="wlStart()">Start match</button> <span id="wlmsg" class="muted"></span></div>
@@ -292,7 +293,7 @@ async function sStart(){const a=app(); $('smsg').textContent='starting… (two c
  if(!r.ok){$('smsg').innerHTML='<span class="err">'+(r.error||'failed')+'</span>';return;} $('smsg').textContent=''; curRun=r.run; showLive();}
 async function wlStart(){const a=app(); $('wlmsg').textContent='starting… (three crabs: the world takes ~60 s to build)';
  const o={mode:$('wlopen').value}; if(o.mode==='locked'){o.A=$('wlopA').value;o.B=$('wlopB').value;o.C=$('wlopC').value;} const sd=$('wlopseed').value; if(sd!=='') o.seed=+sd;
- const r=await api('/api/start',{app:a.path,setup:{openings:o,camera:$('wlcam').value,ball_speed:+$('wlball').value,paddle:$('wlpaddle').checked},seed:+$('wlseed').value,tmax:+$('wltmax').value,speed:+$('wlspeed').value,live:$('wllive').checked,
+ const r=await api('/api/start',{app:a.path,setup:{openings:o,camera:$('wlcam').value,ball_speed:+$('wlball').value,paddle:$('wlpaddle').checked,round_max:+$('wlrmax').value},seed:+$('wlseed').value,tmax:+$('wltmax').value,speed:+$('wlspeed').value,live:$('wllive').checked,
    rounds_to_win:Math.max(1,Math.min(10,+$('wlw').value||3)),aggression:{A:+$('wlaA').value,B:+$('wlaB').value,C:+$('wlaC').value}});
  if(!r.ok){$('wlmsg').innerHTML='<span class="err">'+(r.error||'failed')+'</span>';return;} $('wlmsg').textContent=''; curRun=r.run; showLive();}
 async function srStart(){const a=app(); $('srmsg').textContent='starting… (two crabs: the world takes ~40 s to build)';

@@ -237,10 +237,12 @@ def start_warlords(app, setup=None, seed=1, tmax=300.0, speed=1.0, live=True, li
     (rd / "setup.json").write_text(json.dumps(setup, indent=1))
     scene = rd / "scene.map"; WA.build(ROOT / "maps" / "jumper-hide-seek-v7.map", scene)
     env = base_env()
-    env.update(VS_SEED=str(int(seed)), VS_OUT=str(rd), VS_TMAX=str(float(tmax)), VS_SAVEVIS="0", JHS_SPEED=str(float(speed)), WL_LIVE="1",
+    tmax = max(10.0, min(1500.0, float(tmax)))                 # match length: up to 25 min
+    env.update(VS_SEED=str(int(seed)), VS_OUT=str(rd), VS_TMAX=str(float(tmax)), VS_SAVEVIS="1", JHS_SPEED=str(float(speed)), WL_LIVE="1",
                JHS_LIVE="1" if live else "0", JHS_LIVE_DIR=str(rd / "live"), JHS_STOP=str(rd / "STOP"), WL_SETUP=str(rd / "setup.json"),
                WL_ROUNDS=str(max(1, min(10, int(rounds_to_win)))), JHS_LIVE_W=str(live_size[0]), JHS_LIVE_H=str(live_size[1]),
                WL_BALL_SPEED=str(max(0.3, min(3.0, float((setup or {}).get("ball_speed", 1.6))))), WL_PADDLE="0" if (setup or {}).get("paddle") is False else "1",
+               WL_ROUND_MAX=str(max(30.0, min(1500.0, float((setup or {}).get("round_max", 150))))),
                **{f"WL_AGGR_{k}": str(max(0.0, min(100.0, float(ag.get(k, 60))))) for k in ("A", "B", "C")})
     app_for_play = Path(info["path"])
     if os.environ.get("JHS_FORCE_LOCAL_CONTROLLER") == "1":
@@ -393,6 +395,6 @@ def run_state(rd: Path) -> dict:
     try: kind = json.loads((rd / "local_run.json").read_text()).get("kind")
     except Exception: kind = None
     st["kind"] = kind
-    need = ("qpos.npz", "vision_meta.json", "vision_tof.npz", "result.json") + (() if kind in ("flybrain", "soccer", "tanks", "surround", "tidy_vision") else ("maps.npz",))
+    need = ("qpos.npz", "vision_meta.json", "vision_tof.npz", "result.json") + (() if kind in ("flybrain", "soccer", "tanks", "surround", "warlords", "tidy_vision") else ("maps.npz",))
     st["can_save_mp4"] = all((rd / f).exists() for f in need)
     return st

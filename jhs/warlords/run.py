@@ -27,6 +27,7 @@ START = {k: list(G.jittered_start(k, ROUND[k]["jit"])) for k in G.KEYS}
 VW, VH, VIS_DT = 640, 480, 0.1
 PARK = {"A": (-3.9, 3.2, 0.0), "B": (3.9, 3.2, 180.0), "C": (-3.9, 4.4, 0.0)}   # eliminated crabs wait here, outside the walls
 K3 = G.KEYS
+SAVEVIS = os.environ.get("VS_SAVEVIS", "1") == "1"     # record for the MP4 export
 TEST = os.environ.get("WL_TEST") == "castle"     # referee test scene: crabs stand still, the ball is rolled at RED's castle three times
 
 sys.path.insert(0, str(REPO / "scripts"))
@@ -173,6 +174,10 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
     if TEST: out[K3[2]] = 0.0   # test scene: GREEN pre-eliminated so a RED king hit ends the round
     pending = None; ref_line = "GO!"; banner = None; served = False
     stall = 0.0; serves = 0; still = {k: 0.0 for k in K3}; max_still = {k: 0.0 for k in K3}; rot_only = {k: 0.0 for k in K3}; max_rot = {k: 0.0 for k in K3}
+    # recording for the MP4 export (jhs/render_run -> jhs/warlords/render.py): qpos at 25 fps (float32), per vision tick the meta
+    # (beliefs stored sparse) + each crab's camera (half-size JPEG straight to disk) + dToF (float16). 25 min ~ 40 MB qpos.
+    qbuf, qt, vis_meta, tofrec = [], [], [], {k: [] for k in K3}; q_last = -1e9
+    if SAVEVIS: (OUTD / "vis").mkdir(exist_ok=True)
     t_wall = time.time(); stopped = False; t = 0.0; cmds = {k: {} for k in K3}; P = {k: tuple(START[k][:2]) + (math.radians(START[k][2]),) for k in K3}
     broken_n = 0; cracked = set(); kick_t = {k: 0.0 for k in K3}; kicks = {k: 0 for k in K3}; bv_prev = None; tunnel_seen = False
     def ev(kind, **kw):
@@ -214,6 +219,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                         p = perceive(k, img, selfm, live.cam_xpos[c_id].copy(), live.cam_xmat[c_id].reshape(3, 3).copy(), cam)
                         br.observe(t, p, pose)
                         if HOOK is not None: HOOK.vision(k, img, rngs)
+                        if SAVEVIS and len(vis_meta) % 2 == 0: imageio.imwrite(OUTD / "vis" / f"{k}_{len(vis_meta):05d}.jpg", img[::2, ::2], quality=80)   # 5 Hz camera insets (25 min ~ 250 MB)
                         if os.environ.get("WL_DUMP") and step % (vis_every * 10) == 0:
                             (OUTD / "vis").mkdir(exist_ok=True); imageio.imwrite(OUTD / "vis" / f"{k}_{t:06.1f}.jpg", img, quality=88)
                     else: p = dict(ball=[], crabs=[])
@@ -233,10 +239,20 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                 meta = dict(t=round(t, 2), clock=round(t, 2), score=dict(score), ref=ref_line, final=final, banner=banner, rounds_to_win=ROUNDS_TO_WIN, aggression=dict(AGGR),
                             round=round_no, round_t=round(max(0.0, t - round_t0), 1) if pending is None else 0.0, ball=bpos, bricks_alive={k: list(castles.alive[k]) for k in K3}, **metas)
                 if HOOK is not None: HOOK.meta(meta)
+                if SAVEVIS:
+                    mr = dict(meta)
+                    for k in K3:
+                        mk = dict(mr[k]); B_ = mk.pop("belief", None)
+                        if B_: mk["belief_sp"] = [[i, j, v] for i, col in enumerate(B_) for j, v in enumerate(col) if v >= 0.08]
+                        mr[k] = mk
+                        tofrec[k].append((tofs[k].data.range[0].detach().cpu().numpy().reshape(th, tw) if out[k] is None else np.zeros((th, tw))).astype(np.float16))
+                    vis_meta.append(mr)
             DUE["due"] = (step + 1) % vis_every == 0
             with torch.inference_mode():
                 for k in ("B", "C"): players[k](None)
                 obs, _, _, _ = env.step(players["A"](obs))
+            if SAVEVIS and t - q_last >= 0.04 - 1e-9:
+                q_last = t; qbuf.append(np.array(sim.env_mjdata(0)[1].qpos, dtype=np.float32)); qt.append(t)
             if HOOK is not None and HOOK.step(t) == "stop": stopped = True; break
             # ---------------- referee (sim truth) ----------------
             model, live = sim.env_mjdata(0)
@@ -319,6 +335,11 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
         json.dump(res, open(OUTD / "result.json", "w"), indent=1)
         with open(OUTD / "events.jsonl", "w") as f:
             for e in events: f.write(json.dumps(e) + "\n")
+        if qbuf: np.savez_compressed(OUTD / "qpos.npz", qpos=np.stack(qbuf), t=np.array(qt), fps=25.0)
+        if SAVEVIS and vis_meta:
+            n = min(len(vis_meta), *(len(v) for v in tofrec.values()))
+            np.savez_compressed(OUTD / "vision_tof.npz", **{f"tof{k}": np.stack(tofrec[k][:n]) for k in K3})
+            json.dump(vis_meta[:n], open(OUTD / "vision_meta.json", "w"))
         print("[result] " + json.dumps(res), flush=True)
 
 

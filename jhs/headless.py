@@ -46,6 +46,7 @@ def main():
     ap.add_argument("--rounds-to-win", type=int, default=3, choices=range(1, 11), metavar="1-10", help="surround: first to this many rounds wins (default 3)")
     ap.add_argument("--surround-aggression", type=float, default=60.0, metavar="0-100", help="surround: both crabs, 0 = safe space-seeking, 100 = hunt and cut off (default 60)")
     ap.add_argument("--surround-aggression-red", type=float, default=None, metavar="0-100", help="surround: RED's aggression (overrides --surround-aggression)")
+    ap.add_argument("--round-max", type=float, default=150.0, help="warlords: per-round time limit in s (30-1500, default 150; then most bricks left wins). Match length = --tmax (up to 1500 s = 25 min)")
     ap.add_argument("--ball-speed", type=float, default=1.6, help="warlords: serve speed in m/s (0.3-3.0, default 1.6 = fast ball; 0.7 = the old slow ball)")
     ap.add_argument("--no-paddle", action="store_true", help="warlords: turn off the sim paddle boost (crab contacts kick the ball like a heavy elastic paddle)")
     ap.add_argument("--warlords-aggression", type=str, default=None, metavar="R,B,G", help="warlords: aggression per crab in %% (RED,BLUE,GREEN; one number = all three; default 60)")
@@ -252,6 +253,7 @@ def warlords(a, info, audio):
     if a.seed is not None: op.setdefault("seed", a.seed)
     setup["openings"] = op
     if a.camera: setup["camera"] = a.camera
+    setup["round_max"] = a.round_max
     setup["ball_speed"] = a.ball_speed; setup["paddle"] = not a.no_paddle
     v = [float(x) for x in (a.warlords_aggression or "60").split(",")]; v = (v * 3)[:3] if len(v) == 1 else v
     ag = dict(zip(("A", "B", "C"), v))
