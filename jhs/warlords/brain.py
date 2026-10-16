@@ -171,7 +171,7 @@ def unit():
     out = []
     b = Brain("A", aggression=0.6); b.reset(1.0); b.pose = G.home("A")[:2] + (0.0,)
     # ball rolling at RED's castle -> DEFEND on the guard ring between ball and king
-    K = G.king("A"); p0 = K + 2.5 * (-G.U["A"]) + np.array([0.3, 0.0]); v0 = -0.45 * unitv(p0 - K)
+    K = G.king("A"); p0 = K + 2.0 * (-G.U["A"]) + np.array([0.3, 0.0]); v0 = -0.7 * unitv(p0 - K)
     for i in range(5): b.observe(1.0 + 0.1 * i, dict(ball=[dict(xy=p0 + v0 * 0.1 * i, rng=1.0)]), b.pose)
     b.decide(b.pose); assert b.state == "defend", (b.state, b.sub)
     out.append("ball heading at my castle -> DEFEND")
