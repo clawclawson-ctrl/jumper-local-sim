@@ -246,7 +246,7 @@ def tanks(a, info, audio):
 
 
 def warlords(a, info, audio):
-    """crab warlords, three crabs, without a window (SIM-ONLY VISION CONCEPT). Openers: hold|advance|left|right|centre."""
+    """crab warlords, three crabs, without a window (SIM-ONLY VISION CONCEPT). Kickoff: the ball starts at rest on the centre spot. Openers: rush|left|right|guard."""
     setup = json.loads(Path(a.setup).expanduser().read_text()) if a.setup else {}
     op = dict(setup.get("openings") or {}); op.setdefault("mode", a.openings)
     if a.seed is not None: op.setdefault("seed", a.seed)

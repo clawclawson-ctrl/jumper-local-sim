@@ -49,13 +49,14 @@
 </section>
 
 <section id="warlordssetup" style="display:none"><h2>2 · Set up the match (crab warlords: 3 crabs, castles, one ball, SIM-ONLY)</h2>
+ <div class="row muted">Kickoff: every round the ball starts at rest on the centre spot (all three crabs are 2.0 m from it) and the crabs race for it; the referee never serves or kicks it. A ball no crab has touched for 10 s (stuck where no crab fits) goes back to the centre, at rest.</div>
  <div class="muted"><b>SIM-ONLY VISION CONCEPT.</b> Three crabs defend castles of breakable bricks around a king in a triangle arena; they push one ball with their bodies. The ball on your king puts you out; last crab standing takes the round (time limit: most bricks left). Each crab sees with its own camera + dToF, knows its pose and reads brick counts off the scoreboard.</div>
  <div class="row">Rounds to win <input id="wlw" type="number" value="3" min="1" max="10" style="width:50px">
   Aggression RED <input id="wlaA" type="range" min="0" max="100" value="60" oninput="$('wlaAv').textContent=this.value+'%'"> <span id="wlaAv">60%</span>
   BLUE <input id="wlaB" type="range" min="0" max="100" value="60" oninput="$('wlaBv').textContent=this.value+'%'"> <span id="wlaBv">60%</span>
   GREEN <input id="wlaC" type="range" min="0" max="100" value="60" oninput="$('wlaCv').textContent=this.value+'%'"> <span id="wlaCv">60%</span> (0 = stay home and guard, 100 = roam and attack)</div>
  <div class="row">Openings <select id="wlopen" onchange="$('wllock').style.display=this.value==='locked'?'':'none'"><option value="random">Random</option><option value="locked">Locked</option></select>
-  <span id="wllock" style="display:none">RED <select id="wlopA"><option>hold</option><option>advance</option><option>left</option><option>right</option><option>centre</option></select> BLUE <select id="wlopB"><option>hold</option><option>advance</option><option>left</option><option>right</option><option>centre</option></select> GREEN <select id="wlopC"><option>hold</option><option>advance</option><option>left</option><option>right</option><option>centre</option></select></span>
+  <span id="wllock" style="display:none">RED <select id="wlopA"><option>rush</option><option>left</option><option>right</option><option>guard</option></select> BLUE <select id="wlopB"><option>rush</option><option>left</option><option>right</option><option>guard</option></select> GREEN <select id="wlopC"><option>rush</option><option>left</option><option>right</option><option>guard</option></select></span>
   openings seed <input id="wlopseed" type="number" placeholder="new each match" style="width:110px">
   Ball speed <select id="wlball"><option value="1.6">Fast (1.6 m/s, default)</option><option value="2.2">Very fast (2.2 m/s)</option><option value="1.0">Medium (1.0 m/s)</option><option value="0.7">Slow (0.7 m/s, old)</option></select>
   <label title="sim setting: a crab walking into the ball kicks it like a heavy elastic paddle (ball leaves at up to 2x the crab's real walking speed)"><input type="checkbox" id="wlpaddle" checked> paddle boost</label>

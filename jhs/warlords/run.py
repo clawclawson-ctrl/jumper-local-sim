@@ -137,8 +137,9 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
     def serve(a):
         model, live = sim.env_mjdata(0)
         live.qpos[bqa:bqa + 3] = [0.0, 0.0, G.BALL_R + 0.003]; live.qpos[bqa + 3:bqa + 7] = [1, 0, 0, 0]
-        live.qvel[bda:bda + 6] = 0; live.qvel[bda:bda + 2] = [G.SERVE_V * math.cos(a), G.SERVE_V * math.sin(a)]
+        live.qvel[bda:bda + 6] = 0                       # KICKOFF: the ball is placed AT REST at the centre (a is unused)
         mujoco.mj_forward(model, live); sync()
+        for b_ in brains.values(): b_.kickoff(t)        # public referee call (like the scoreboard)
     def set_brick(k, i, on):
         g = BRICK[k][i]
         for M in {id(model): model, id(rmodel): rmodel}.values():
@@ -228,7 +229,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                     st_ = "out" if out[k] else (br.state if pending is None else "paused")
                     metas[k] = dict(state=st_, sub=(f"OUT: king hit" if out[k] else br.sub), pose=[round(v, 3) for v in pose], cmd={a: round(float(b), 2) for a, b in c.items() if a != "press"},
                                     dets=[dict(cls="ball", bbox=d["bbox"], rng=round(d["rng"], 2)) for d in p["ball"]] + [dict(cls="crab", bbox=d["bbox"], rng=round(d["rng"], 2)) for d in p["crabs"]],
-                                    bricks=castles.left(k), bricks_total=castles.total(k), opener=br.op_name, opener_on=br.opening is not None)
+                                    bricks=castles.left(k), bricks_total=castles.total(k), opener=br.op_name, opener_on=br.opening is not None, belief=br.belief_map())
                 meta = dict(t=round(t, 2), clock=round(t, 2), score=dict(score), ref=ref_line, final=final, banner=banner, rounds_to_win=ROUNDS_TO_WIN, aggression=dict(AGGR),
                             round=round_no, round_t=round(max(0.0, t - round_t0), 1) if pending is None else 0.0, ball=bpos, bricks_alive={k: list(castles.alive[k]) for k in K3}, **metas)
                 if HOOK is not None: HOOK.meta(meta)
@@ -248,7 +249,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                         live.qpos[bqa:bqa + 3] = [q[0], q[1], G.BALL_R + 0.003]; live.qpos[bqa + 3:bqa + 7] = [1, 0, 0, 0]; live.qvel[bda:bda + 6] = 0
                         live.qvel[bda:bda + 2] = G.BALL_SPEED * d_; mujoco.mj_forward(model, live); sync(); served = True; ev("test_shot", at=[round(float(v), 2) for v in q])
             if pending is None and t >= settle_until:
-                if not served: serve(ROUND["serve"]); served = True; serves += 1; ev("serve", angle=round(math.degrees(ROUND["serve"])))
+                if not served: serve(0.0); served = True; ev("kickoff")
                 # touches from sim truth geometry (the ball's true centre vs the brick / king boxes; a contact can live inside one
                 # env step's physics substeps only, so data.contact at the step end would miss it)
                 bxy = np.array(live.qpos[bqa:bqa + 2], float); bv_ = np.array(live.qvel[bda:bda + 2], float)
@@ -264,6 +265,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                             live.qvel[bda:bda + 2] = v2; bv_ = v2; kick_t[k] = t + 0.4; kicks[k] += 1; kicked = True
                 # touches: within 3 cm, OR the ball bounced this step (velocity flipped) near a brick/king -- a fast ball can touch
                 # and leave inside one env step's physics substeps (contacts are physical; this only tells the referee)
+                near_ = any(out[k] is None and float(np.linalg.norm(bxy - live.qpos[model.jnt_qposadr[model.body_jntadr[base[k]]]:][:2])) < G.REACH for k in K3)
                 bounced = not kicked and bv_prev is not None and float(np.linalg.norm(bv_ - bv_prev)) > 0.25
                 hits, kh_ = castles.ball_hit(bxy, G.BALL_R + 0.03 + (float(np.linalg.norm(bv_)) * dt if bounced else 0.0))
                 if bounced and len(hits) > 1: hits = [min(hits, key=lambda h: G.brick_dist(bxy, castles.B[h[0]][h[1]]))]
@@ -279,11 +281,11 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                         kk = kk; out[kk] = round(t, 1); ev("king_hit", team=G.TEAM[kk]); place_robot(kk, *PARK[kk])
                         alive = [k for k in K3 if out[k] is None]
                         if len(alive) == 1: end_round("king hit", alive[0])
-                        else: serve(float(ORNG.uniform(0, 2 * math.pi))); serves += 1
+                        else: serve(0.0); ev("kickoff")            # play on: the ball goes back to the centre, at rest
                         break
                 if pending is None and step % 10 == 0:
-                    vb = float(np.hypot(*live.qvel[bda:bda + 2])); stall = stall + 10 * dt if vb < 0.04 else 0.0
-                    if stall > G.STALL_S and not TEST: serve(float(ORNG.uniform(0, 2 * math.pi))); serves += 1; stall = 0.0; ev("reserve")
+                    vb = float(np.hypot(*live.qvel[bda:bda + 2])); stall = stall + 10 * dt if (vb < 0.04 and not kicked and not near_) else 0.0
+                    if stall > G.STALL_S and not TEST: serve(0.0); serves += 1; stall = 0.0; ev("recentre", at=[round(float(v), 2) for v in bxy])
                     if t - round_t0 > G.ROUND_MAX:
                         end_round("time: most bricks left", G.tiebreak(castles, out))
             if step % 10 == 0:
@@ -310,7 +312,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
         res = dict(kind="warlords", label="SIM-ONLY VISION CONCEPT", seed=SEED, openings=dict(mode=OPEN_CFG["mode"], seed=OPEN_SEED, rounds=OPEN_LOG),
                    tmax=TMAX, rounds_to_win=ROUNDS_TO_WIN, aggression={G.TEAM[k]: v for k, v in AGGR.items()}, t_end=round(step * dt, 2), stopped=stopped,
                    score={G.TEAM[k]: v for k, v in score.items()}, rounds=rounds, winner=G.TEAM.get(winner) if final else None, final=final,
-                   falls={G.TEAM[k]: v for k, v in falls.items()}, bricks_broken=broken_n, paddle_kicks={G.TEAM[k]: v for k, v in kicks.items()}, ball_speed=G.BALL_SPEED, paddle=G.PADDLE, serves=serves, round_max=G.ROUND_MAX,
+                   falls={G.TEAM[k]: v for k, v in falls.items()}, bricks_broken=broken_n, paddle_kicks={G.TEAM[k]: v for k, v in kicks.items()}, ball_speed=G.BALL_SPEED, paddle=G.PADDLE, recentres=serves, round_max=G.ROUND_MAX,
                    max_spin_only_s={G.TEAM[k]: round(v, 1) for k, v in max_rot.items()}, max_standing_s={G.TEAM[k]: round(v, 1) for k, v in max_still.items()},
                    brain_counts={G.TEAM[k]: dict(b.counts) for k, b in brains.items()}, wall_s=round(time.time() - t_wall, 1))
         json.dump(res, open(OUTD / "result.json", "w"), indent=1)

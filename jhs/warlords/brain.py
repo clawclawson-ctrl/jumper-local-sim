@@ -10,6 +10,7 @@ import math
 from collections import deque
 import numpy as np
 from . import game as G
+from .belief import BallBelief
 
 WALK, PUSH = 0.45, 0.60
 STRIKE = 0.75                        # stick when lined up behind the ball: the paddle boost kicks it at ~2x this real walking speed
@@ -45,11 +46,22 @@ class Brain:
     def reset(self, t):
         self.t = t; self.obs = deque(maxlen=12); self.ball = None; self.ball_v = np.zeros(2); self.ball_t = -1e9
         self.state = "hold"; self.sub = ""; self.spin_t0 = None; self.opening = None; self.op_wps = []; self.op_name = "-"
+        self.bel = BallBelief(np.random.default_rng(int(self.rng.integers(1 << 30)))); self.bel_t = t
         self.pose = None; self.target = None; self.track = []; self.jit = self.rng.normal(0, 0.05, 2); self.crabs = []
 
     def set_opening(self, rnd, t):
         self.op_name = rnd["opener"]; self.op_wps = G.opener_waypoints(self.team, rnd["opener"]); self.opening = t
         self.jit = self.rng.normal(0, 0.05, 2)
+
+    def kickoff(self, t):
+        """the referee's public call "ball at rest on the centre spot" (kickoff / re-centre): like the scoreboard, not vision."""
+        self.obs.clear(); self.ball = np.zeros(2); self.ball_v = np.zeros(2); self.ball_t = t; self.bel.at((0.0, 0.0))
+
+    def belief_map(self):
+        """my ball belief as a coarse 0-1 grid (minimap heatmap); None when I can see the ball."""
+        if self.t - self.ball_t < 0.3: return None
+        g = self.bel.grid(); m = g.max()
+        return None if m <= 0 else np.round(g / m, 2).tolist()
 
     # ---------------- perception ----------------
     def observe(self, t, p, pose):
@@ -64,6 +76,10 @@ class Brain:
             if len(o) >= 3:
                 T = np.array([tt for tt, _ in o]); Q = np.array([q for _, q in o]); T = T - T.mean()
                 if (T ** 2).sum() > 1e-6: self.ball_v = (T[:, None] * (Q - Q.mean(0))).sum(0) / (T ** 2).sum(); self.ball = Q.mean(0) + self.ball_v * T[-1]
+        # ball belief: a sighting resets it; otherwise it rolls on and the floor I see empty is cleared
+        dtb = max(0.0, t - self.bel_t); self.bel_t = t
+        if bs: self.bel.at(self.ball, self.ball_v)
+        elif dtb > 0: self.bel.step(min(dtb, 0.5), pose)
         self.crabs = [np.asarray(d["xy"], float) for d in (p.get("crabs") or [])]
 
     def ball_now(self):
@@ -87,6 +103,9 @@ class Brain:
             g = self._ring(g); self.state = "defend"; self.sub = f"DEFEND: ball at my castle in {th[0]:.1f}s"; self.counts["defends"] += 1
             return self._go(pose, g, face=b, speed=DEF_WALK)
         if self.opening is not None:
+            if self.op_name == "guard" and t - self.opening < 1.5 + 1.5 * (1 - self.aggr):   # guard: watch the kickoff from home first
+                self.state = "opener"; self.sub = "OPENER guard"
+                return self._go(pose, self.H, face=b if b is not None else np.zeros(2))
             if self.op_wps and t - self.opening < 4.0 + 3.0 * (1 - self.aggr):
                 wp = np.array(self.op_wps[0])
                 if np.linalg.norm(wp - me) < 0.15: self.op_wps.pop(0)
@@ -115,9 +134,12 @@ class Brain:
         g = self.K + GUARD * unitv((b if b is not None else np.zeros(2)) - self.K)
         g = self._ring(g); self.state = "hold"
         if b is None:
-            self.sub = "SCAN: ball lost"; self.counts["scans"] += 1
-            if np.linalg.norm(g - me) < 0.2: return {"rx": 0.7}
-            return self._go(pose, g)
+            self.counts["scans"] += 1
+            pk, pm = self.bel.peak()                      # SEARCH: walk toward + look at the likeliest ball spot of my belief
+            gp = self._ring(pk) if np.linalg.norm(pk - self.K) < G.castle_zone(self.team, 0.4) else pk
+            self.sub = f"SEARCH: ball belief peak ({pk[0]:.1f}, {pk[1]:.1f})"
+            if np.linalg.norm(pk - me) < 1.2: return self._go(pose, me, face=pk) if abs(wrap(math.atan2(*(pk - me)[::-1]) - yaw)) > 0.4 else self._go(pose, gp, face=pk)
+            return self._go(pose, gp, face=pk)
         self.sub = "HOLD guard spot"; return self._go(pose, g, face=b)
 
     def gap_aim(self, k):
@@ -197,4 +219,13 @@ def unit():
         bb.opening = None; res.append((bb.state, np.round(list(bb.decide(pose).values()), 3).tolist(), bb.decide(pose) and bb.state))
     assert res[0][1] == res[1][1] == res[2][1], res
     out.append("3-way mirror: identical commands in rotated situations")
+    # ball out of view: SEARCH walks to the belief peak (not aimless scanning); mirror-symmetric
+    gs = []
+    for k in G.KEYS:
+        R = G.rot(k); bb = Brain(k, np.random.default_rng(5)); bb.counts["scans"] = 0
+        bb.bel.at(R @ np.array([1.2, 0.3]), (0, 0), sig=0.01); bb.bel.REGROW = 0; bb.ball = None; bb.ball_t = -1e9
+        pose = (*(R @ np.array(G.home("A")[:2])), math.atan2(*(R @ np.array([0.0, 1.0]))[::-1]))
+        c = bb._decide(pose); gs.append(R.T @ bb.bel.peak()[0]); assert bb.sub.startswith("SEARCH"), bb.sub
+    assert np.allclose(gs[0], gs[1], atol=0.3) and np.allclose(gs[0], gs[2], atol=0.3), gs
+    out.append("ball out of view: SEARCH heads for the ball-belief peak (3-way symmetric)")
     return out

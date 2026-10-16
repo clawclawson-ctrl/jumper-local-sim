@@ -86,6 +86,15 @@ class WarlordsOverlay:
         MH = int(7.3 * sc_)
         self._panel(d, [mx0 - S(5), my0 - S(4), mx0 + MW + S(5), my0 + MH + S(20)], GOLD)
         d.polygon([P(*G.VERT[k]) for k in G.KEYS], fill=(60, 52, 44), outline=(200, 180, 150))
+        from .belief import X0, Y0, CELL                       # each crab's OWN ball belief (where the ball may be), in its colour
+        for k in G.KEYS:
+            Bm = (meta.get(k) or {}).get("belief")
+            if not Bm or (meta.get(k) or {}).get("state") == "out": continue
+            for i, col in enumerate(Bm):
+                for j, v in enumerate(col):
+                    if v < 0.08: continue
+                    x0_, y0_ = X0 + i * CELL, Y0 + j * CELL
+                    d.rectangle([*P(x0_, y0_ + CELL), *P(x0_ + CELL, y0_)], fill=tuple(NC[k][:3]) + (int(50 + 130 * v),))
         for k in G.KEYS:
             al = (meta.get("bricks_alive") or {}).get(k)
             for i, b in enumerate(G.bricks(k)):
@@ -98,7 +107,7 @@ class WarlordsOverlay:
                            (qx + b * math.cos(-yw - 2.4), qy + b * math.sin(-yw - 2.4))], fill=NC[k], outline=(255, 255, 255))
         if meta.get("ball"):
             q = P(*meta["ball"][:2]); d.ellipse([q[0] - S(3), q[1] - S(3), q[0] + S(3), q[1] + S(3)], fill=(255, 255, 255))
-        d.text((mx0, my0 + MH + S(4)), "top view · SIM TRUTH", font=self.f6, fill=(240, 230, 210))
+        d.text((mx0, my0 + MH + S(4)), "top view · SIM TRUTH · heat = OWN ball beliefs", font=self.f6, fill=(240, 230, 210))
         ref = meta.get("ref", "")
         d.rectangle([S(360), H - S(52), S(1340), H - S(16)], fill=(28, 20, 14, 195), outline=GOLD + (180,))
         d.text((S(372), H - S(46)), f"SCORER (SIM TRUTH): {ref}"[:88], font=self.f2, fill=(255, 235, 170))

@@ -128,8 +128,8 @@ def warlords():
     if not a.exists(): return "apps/jumper_warlords_vision.app not present (skipped)"
     from jhs.apps import inspect as _insp
     i = _insp(a); assert i["ok"] and i["kind"] == "warlords", i
-    from jhs.warlords import game as WG, brain as WBr
-    return f"{a.name}: warlords; unit tests: " + "; ".join(WG.unit() + WBr.unit())
+    from jhs.warlords import game as WG, brain as WBr, belief as WBe
+    return f"{a.name}: warlords; unit tests: " + "; ".join(WG.unit() + WBr.unit() + WBe.unit())
 item("crab warlords app + castles + ball + brains (SIM-ONLY)", warlords)
 item("room v7 map", lambda: (ROOT / "maps" / "jumper-hide-seek-v7.map").stat().st_size)
 if "--full" in sys.argv:

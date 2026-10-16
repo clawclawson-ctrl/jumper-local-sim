@@ -27,15 +27,18 @@ CLEAR = 0.30                                 # leg clearance from walls / bricks
 BALL_DECEL = float(os.environ.get("WL_BALL_DECEL", "0.008"))   # m/s^2: low-friction ball (rolls for a long time)
 WALL_E = 0.90                                # wall / brick restitution (bouncy stone; MuJoCo solref WALL_SOLREF below)
 WALL_SOLREF = "-40000 -12"                   # direct stiffness/damping: zeta ~0.03 -> restitution ~0.9, 1.5 cm max squash at 3 m/s
-BALL_SPEED = float(os.environ.get("WL_BALL_SPEED", "1.6"))     # m/s: serve speed setting ("Ball speed"; was 0.70 before the fast-ball update)
-SERVE_V = BALL_SPEED                         # the referee's serve from the centre
+BALL_SPEED = float(os.environ.get("WL_BALL_SPEED", "1.6"))     # m/s: "Ball speed" setting = the castle-test shot speed (no serves since the kickoff rule)
+SERVE_V = 0.0                                # KICKOFF: the ball starts every round AT REST at the centre (no serve, no random kick)
 BALL_VMAX = 3.2                              # m/s: no ball goes faster than this (sanity cap, also bounds tunnelling checks)
 # PADDLE BOOST (sim setting, default ON, WL_PADDLE=0 turns it off): a crab body that walks INTO the ball hits it like a heavy,
 # elastic paddle -- the ball's normal speed leaves at least (1 + PADDLE_E) x the crab's real walking speed along the contact normal
 # (PADDLE_E = 1 is the exact elastic-collision result for a paddle much heavier than the 90 g ball). Nothing fakes the crab's speed.
 PADDLE = os.environ.get("WL_PADDLE", "1") != "0"
 PADDLE_E = 1.0
-STALL_S = 4.0                                # ball slower than 0.04 m/s for this long -> the referee re-serves from the centre
+STALL_S = 10.0                               # KICKOFF rule: the referee only re-centres the ball (at rest) when it has been still this long
+                                             # AND no crab has touched it in that time (= no crab can get to it: e.g. wedged near a wall
+                                             # where no crab body + 0.30 m leg clearance fits behind it). Otherwise the crabs must fetch it.
+REACH = BODY_R + BALL_R + 0.03               # a crab touching the ball counts as "getting to it" (resets the stall clock)
 ROUND_MAX = float(os.environ.get("WL_ROUND_MAX", "150"))
 CASTLE_RGBA = {"A": (0.85, 0.15, 0.10, 1.0), "B": (0.15, 0.30, 0.90, 1.0), "C": (0.10, 0.65, 0.20, 1.0)}
 # eliminated crab: it leaves the field (the referee parks it outside the walls); its castle REMAINS (bricks + king stay as obstacles).
@@ -162,7 +165,7 @@ def tiebreak(castles, out):
     return top[0] if len(top) == 1 else None
 
 
-OPENERS = ("hold", "advance", "left", "right", "centre")
+OPENERS = ("rush", "left", "right", "guard")   # kickoff: straight at the centre ball, via a left / right arc (strike from an angle), or guard first
 
 
 def roll_round(rng, cfg=None):
@@ -171,7 +174,6 @@ def roll_round(rng, cfg=None):
     for k in KEYS:
         op = cfg.get(k) if mode == "locked" and cfg.get(k) in OPENERS else str(rng.choice(OPENERS))
         out[k] = dict(opener=op, jit=(float(rng.uniform(-0.08, 0.08)), float(rng.uniform(-0.08, 0.08)), float(rng.uniform(-8, 8))))
-    out["serve"] = float(rng.uniform(0, 2 * math.pi))
     return out
 
 
@@ -182,8 +184,7 @@ def jittered_start(k, jit):
 def opener_waypoints(k, op):
     """waypoints in the world frame, defined in RED's frame and rotated (fair 3-way)."""
     H = np.array(home("A")[:2]); inward = -U["A"]; side = np.array([-inward[1], inward[0]])
-    P = {"hold": [], "advance": [H + 0.6 * inward], "left": [H + 0.3 * inward + 0.6 * side], "right": [H + 0.3 * inward - 0.6 * side],
-         "centre": [H + 1.0 * inward]}[op]
+    P = {"rush": [], "guard": [], "left": [H + 1.1 * inward + 0.55 * side], "right": [H + 1.1 * inward - 0.55 * side]}[op]
     return [tuple(rot(k) @ q) for q in P]
 
 
@@ -193,6 +194,11 @@ def aggression_from_env(env):
 
 
 # ---------------- 2D ball/crab contact model (kinematic harness + unit tests; the real sim uses MuJoCo contacts) ----------------
+def wedged(p, castles=None):
+    """the ball at p is jammed where no crab body can get round it (against a wall / brick / king, or in a corner)."""
+    return wall_at(np.asarray(p, float), castles)[0] < BALL_R + 0.04       # resting against a wall / brick / king
+
+
 def paddle(v, cv, n):
     """ball velocity v after a crab moving at cv touches it along unit normal n (crab -> ball)."""
     v = np.asarray(v, float); vc = float(np.asarray(cv) @ n)
