@@ -19,3 +19,11 @@
 - Results: ramp seeds 1,2,3 SUCCESS (8-11 deg off the cars); both seeds 1,4 SUCCESS (ramp + kickflip over all five cars); kickflip seed 1 SUCCESS; sprint seed 1 SUCCESS (0-1.5 m/s 0.73 s, 4 m 2.72 s, top 1.69 m/s, sim). Gas 0.60 kg tank, ~0.42 kg used for both.
 - jhs/crabster/skin.py: Roadster skin (gloss red / black / chrome) + rear spoiler + thruster plume capsules (render only). CB_SHOTS env saves PNGs: /workspace/crabster/ramp_inverted.png, mid_kickflip.png.
 - Next: night skybox (sky still renders blue), overlay, cinematic camera, setup panel + replay, MP4 export + audio, --check unit hookup, more seeds, zip.
+
+## Crabster — chunk 4 (2026-10-16 PT)
+- Skin now pearl WHITE (black glass canopy band, slim red shoulder accents, emissive front light bar, glowing nozzles that brighten + plume when firing, rear spoiler kept). Night skybox.
+- jhs/crabster/view.py: Overlay (CRABSTER + SCRIPTED STUNT, SIM-ONLY THRUSTER + SUCTION CONCEPT, sim clock, gas bar, suction on/N, g-force, act/phase, stunt caller, results) + MP4 title card; Cam Follow (eased, slow orbit, pulls back on the arch) / Fixed (grandstand); Painter shared by live + MP4.
+- App integration: apps/jumper_crabster_vision.app (vision/crabster.json), apps.inspect kind "crabster", runner.start_crabster (builds stage per run), server /api/start, setup panel (stunt picker, camera, speed, seed, live, Start + Replay), run list row, save_mp4 naming, render_run -> jhs/crabster/render.py (1x, optional audio via jhs.audio.mux), live.jpg/status.json + STOP + real-time cap. README section.
+- ./run.sh --check ALL OK incl. Crabster unit tests (flight, stage builds/loads, overlay/camera).
+- Runner run Both seed 1: ramp SUCCESS (10 deg off the cars) + kickflip SUCCESS. /workspace/crabster/show.mp4 1080p 25 fps 18.7 s with test audio; stills ramp_inverted.png, mid_kickflip.png, title.png.
+- Known: Follow cam frames the kickflip apex too high (crab near the top edge under the overlay box) -- widen distance in flight next.

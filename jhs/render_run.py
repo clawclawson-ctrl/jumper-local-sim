@@ -28,6 +28,9 @@ W, H = {"1080": (1920, 1080), "720": (1280, 720), "480": (848, 480)}[A.size]
 PROG = Path(str(OUT) + ".progress.json")
 def progress(**k): PROG.write_text(json.dumps(k))
 
+if INFO.get("kind") == "crabster":    # stunt show: jhs/crabster/render.py
+    from jhs.crabster.render import main as _cb_render
+    _cb_render(A, RUN, INFO, OUT, W, H, progress); sys.exit(0)
 if INFO.get("kind") == "surround":    # light-cycle trails: jhs/surround/render.py
     from jhs.surround.render import main as _sr_render
     _sr_render(A, RUN, INFO, OUT, W, H, progress); sys.exit(0)

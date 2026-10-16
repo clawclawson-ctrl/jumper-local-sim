@@ -226,6 +226,37 @@ def start_surround(app, setup=None, seed=1, tmax=300.0, speed=1.0, live=True, li
     return proc, rd
 
 
+def start_crabster(app, stunt="both", camera="follow", seed=1, speed=1.0, live=True, live_size=(1280, 720), physics_hz=None, tmax=60.0):
+    """Crabster stunt show (jhs/crabster/run.py) on the night stage. stunt = ramp | kickflip | both | sprint; camera = follow | fixed."""
+    from .tanks import field as TF
+    from .crabster import scene as CS
+    info = inspect(app)
+    if not info.get("ok"): raise ValueError(info.get("error"))
+    if info["kind"] != "crabster": raise ValueError("not a Crabster app")
+    stunt = str(stunt or "both").lower(); camera = str(camera or "follow").lower()
+    if stunt not in ("ramp", "kickflip", "both", "sprint"): raise ValueError(f"unknown stunt {stunt}")
+    if camera not in ("follow", "fixed"): raise ValueError(f"unknown camera {camera}")
+    rd = new_run_dir("crabster")
+    (rd / "setup.json").write_text(json.dumps(dict(stunt=stunt, camera=camera), indent=1))
+    field = rd / "field.map"; scene = rd / "scene.map"
+    TF.build(ROOT / "maps" / "jumper-hide-seek-v7.map", field, pieces=(), label="Crabster stage"); CS.build(field, scene); field.unlink()
+    env = base_env()
+    env.update(VS_SEED=str(int(seed)), VS_OUT=str(rd), VS_TMAX=str(float(tmax)), JHS_SPEED=str(float(speed)), CB_STUNT=stunt, CB_CAMERA=camera, TK_ARENA="open",
+               JHS_LIVE="1" if live else "0", JHS_LIVE_DIR=str(rd / "live"), JHS_STOP=str(rd / "STOP"), JHS_LIVE_W=str(live_size[0]), JHS_LIVE_H=str(live_size[1]))
+    app_for_play = Path(info["path"])
+    if os.environ.get("JHS_FORCE_LOCAL_CONTROLLER") == "1":
+        app_for_play = strip_controller(app_for_play, rd / "app_local_controller.app")
+    (rd / "local_run.json").write_text(json.dumps(dict(app=str(app_for_play), app_original=info["path"], scene=str(scene), kind="crabster", stunt=stunt, camera=camera,
+                                                       seed=seed, tmax=tmax, physics_hz=physics_hz or 1000, speed=speed, started=time.strftime("%Y-%m-%d %H:%M:%S"), info=info), indent=1))
+    cmd = [sys.executable, str(PKG / "crabster" / "run.py"), "--app", str(app_for_play), "--scene", str(scene),
+           "--backend", "native", "--device", "cpu", "--headless", "--steps", "999999999"]
+    if physics_hz: cmd += ["--physics-hz", str(int(physics_hz))]
+    log = open(rd / "log.txt", "w")
+    proc = subprocess.Popen(cmd, cwd=str(rd), env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    (rd / "pid").write_text(str(proc.pid))
+    return proc, rd
+
+
 def start_warlords(app, setup=None, seed=1, tmax=300.0, speed=1.0, live=True, live_size=(1280, 720), physics_hz=None, rounds_to_win=3, aggression=None):
     """3-crab Crab Warlords (jhs/warlords/run.py) on the triangle castle arena. setup = {openings, camera}; aggression = {A, B, C} in %."""
     from .warlords import arena as WA
@@ -345,7 +376,9 @@ def save_mp4(run_dir, out=None, size="1080", folder=None, audio=None):
         if (rd / "result.json").exists(): r = json.loads((rd / "result.json").read_text())
         info = json.loads((rd / "local_run.json").read_text()) if (rd / "local_run.json").exists() else {}
         kind = r.get("kind") or info.get("kind")
-        if kind == "warlords":
+        if kind == "crabster":
+            ok = "OK" if r.get("success") else "FAIL"; out = folder / f"crabster-{r.get('stunt', 'show')}-{rd.name}-{ok}-1x-{size}p.mp4"
+        elif kind == "warlords":
             sc = r.get("score") or {}; out = folder / f"jumper-warlords-{rd.name}-RED{sc.get('RED', 0)}-BLUE{sc.get('BLUE', 0)}-GREEN{sc.get('GREEN', 0)}-1x-{size}p.mp4"
         elif kind == "surround":
             sc = r.get("score") or {}; out = folder / f"jumper-surround-{rd.name}-RED{sc.get('RED', 0)}-BLUE{sc.get('BLUE', 0)}-1x-{size}p.mp4"
@@ -385,7 +418,7 @@ def run_state(rd: Path) -> dict:
         st.update(finished=True, result={k: r.get(k) for k in ("n_found", "n_gathered", "n_toys", "t_all_gathered", "t_end", "falls", "coverage", "placed", "hidden_behind", "n_correct", "props_moved_m",
                                                 "kind", "counts", "path_m", "time_s", "stopped", "toys_moved_m",
                                                 "score", "goals", "own_goals", "hits", "shots_fired", "hits_to_win", "drop_balls", "ball_idle_s", "final", "winner",
-                                                "mp4", "bpm", "meter", "style", "title", "pulse", "phrases")})
+                                                "mp4", "bpm", "meter", "style", "title", "pulse", "phrases", "stunt", "results", "success", "gas_left")})
     log = rd / "log.txt"
     if log.exists():
         txt = log.read_text(errors="replace")
@@ -397,6 +430,6 @@ def run_state(rd: Path) -> dict:
     try: kind = json.loads((rd / "local_run.json").read_text()).get("kind")
     except Exception: kind = None
     st["kind"] = kind
-    need = ("qpos.npz", "vision_meta.json", "vision_tof.npz", "result.json") + (() if kind in ("flybrain", "soccer", "tanks", "surround", "warlords", "tidy_vision") else ("maps.npz",))
+    need = ("qpos.npz", "vision_meta.json", "vision_tof.npz", "result.json") + (() if kind in ("crabster", "flybrain", "soccer", "tanks", "surround", "warlords", "tidy_vision") else ("maps.npz",))
     st["can_save_mp4"] = all((rd / f).exists() for f in need)
     return st

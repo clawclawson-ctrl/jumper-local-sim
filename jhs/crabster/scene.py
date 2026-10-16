@@ -86,6 +86,8 @@ def build(src_map, dst_map):
                           diffuse=rgb, specular="0.3 0.3 0.3", cutoff="28", exponent="6", castshadow="true" if i < 2 else "false", attenuation="1 0 0")
             _g(st, f"light_mast_{i}", type="cylinder", pos=f"{x} {y} 1.6", size="0.03 1.6", rgba="0.15 0.15 0.17 1", contype="0", conaffinity="0")
             _g(st, f"light_can_{i}", type="sphere", pos=f"{x} {y} 3.2", size="0.09", rgba=rgb + " 1", contype="0", conaffinity="0")
+        for tx in root.iter("texture"):                         # night sky: deep navy to black, with a faint horizon glow
+            if tx.get("type") == "skybox": tx.set("rgb1", "0.015 0.02 0.05"); tx.set("rgb2", "0.07 0.06 0.10")
         root.set("model", "jumper-crabster")
         xml = ET.tostring(root, encoding="unicode").encode()
         pkg["files"]["scene.xml"] = {"bytes": len(xml), "sha256": hashlib.sha256(xml).hexdigest()}
@@ -104,3 +106,26 @@ def build(src_map, dst_map):
 
 if __name__ == "__main__":
     import sys; print(build(sys.argv[1], sys.argv[2]))
+
+
+def unit():
+    out = []
+    (x0, z0), n0 = arch_point(0.0); (x1, z1), n1 = arch_point(math.pi)
+    assert abs(x0 - ARCH_X) < 1e-9 and abs(z0) < 1e-9 and abs(z1 - 2 * ARCH_R) < 1e-9 and n1[1] < -0.99   # floor tangent -> ceiling, normal points down
+    cb = car_boxes(); assert len(cb) == 5 and [c[0] for c in cb][2] == "Semi"
+    for a, b in zip(cb, cb[1:]): assert a[2] + a[4] < b[2] - b[4]                                          # side by side, no overlap
+    assert all(abs(c[1] - CARS_X) < 1e-9 for c in cb) and START["kickflip"][0] > CARS_X + 0.62
+    out.append("stage: arch half loop (floor tangent -> inverted ceiling), five cars in a row, Semi in the middle")
+    import tempfile, mujoco
+    src = Path(__file__).resolve().parents[2] / "maps" / "jumper-hide-seek-v7.map"
+    if src.exists():
+        d = Path(tempfile.mkdtemp())
+        from jhs.tanks import field as TF
+        TF.build(src, d / "f.map", pieces=(), label="Crabster stage"); build(d / "f.map", d / "s.map")
+        with zipfile.ZipFile(d / "s.map") as z: z.extractall(d / "x")
+        m = mujoco.MjModel.from_xml_path(str(d / "x" / "scene.xml"))
+        names = [mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_GEOM, g) or "" for g in range(m.ngeom)]
+        assert sum(n.endswith("arch_%d" % i) for n in names for i in range(ARCH_N)) == ARCH_N and any("car_2_body" in n for n in names)
+        assert m.nlight >= 5
+        out.append(f"stage map builds and loads in MuJoCo ({m.ngeom} geoms, {m.nlight} lights, night sky)")
+    return out

@@ -228,6 +228,10 @@ class H(BaseHTTPRequestHandler):
                     proc, rd = runner.start_warlords(info["path"], setup=b.get("setup"), seed=int(b.get("seed", 1)), tmax=float(b.get("tmax", 300)),
                                                      speed=float(b.get("speed", 1.0)), live=bool(b.get("live", True)), physics_hz=b.get("physics_hz"),
                                                      rounds_to_win=int(b.get("rounds_to_win", 3)), aggression=b.get("aggression") or None)
+                elif info.get("kind") == "crabster":
+                    st = b.get("setup") or {}
+                    proc, rd = runner.start_crabster(info["path"], stunt=st.get("stunt", "both"), camera=st.get("camera", "follow"), seed=int(b.get("seed", 1)),
+                                                     speed=float(b.get("speed", 1.0)), live=bool(b.get("live", True)), physics_hz=b.get("physics_hz"))
                 elif info.get("kind") == "surround":
                     proc, rd = runner.start_surround(info["path"], setup=b.get("setup"), seed=int(b.get("seed", 1)), tmax=float(b.get("tmax", 300)),
                                                      speed=float(b.get("speed", 1.0)), live=bool(b.get("live", True)), physics_hz=b.get("physics_hz"),

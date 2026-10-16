@@ -87,7 +87,7 @@ def unit():
         a = np.linalg.norm(w) * dt
         if a > 0: k = w / np.linalg.norm(w); K = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]]); R = R @ (np.eye(3) + math.sin(a) * K + (1 - math.cos(a)) * K @ K)
     assert np.linalg.norm(rotvec(R)) < 0.1 and np.linalg.norm(w) < 0.3, (rotvec(R), w)
-    out.append("kickflip controller: 360 deg about the long axis, back upright, with clipped nozzle torques")
+    out.append("kickflip controller: 360 deg about its travel axis (body x), back upright, with clipped nozzle torques")
     return out
 
 

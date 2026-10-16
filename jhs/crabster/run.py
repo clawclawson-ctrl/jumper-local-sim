@@ -19,6 +19,7 @@ STUNT = os.environ.get("CB_STUNT", "both").lower()
 SEED = int(os.environ.get("VS_SEED", "1")); TMAX = float(os.environ.get("VS_TMAX", "60"))
 OUTD = Path(os.environ.get("VS_OUT", "crabster_run")); OUTD.mkdir(parents=True, exist_ok=True)
 LABEL = "CRABSTER -- SCRIPTED STUNT, SIM-ONLY THRUSTER + SUCTION CONCEPT"
+CAMERA = os.environ.get("CB_CAMERA", "follow")
 ROLL_T = 0.45             # s, the half roll after release
 YAW_T = 1.0               # s, the half twist that turns it to face the cars
 BOOST_MAX = 18.0          # N, fore-aft boost nozzle (sprint / flights)
@@ -200,10 +201,15 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
     robot_geoms = {g for g in range(model.ngeom) if model.geom_bodyid[g] in rb}
     car_geoms = {g for g in range(model.ngeom) if (mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g) or "").startswith("car_")}
     SHOTS = [x for x in os.environ.get("CB_SHOTS", "").split(",") if x]          # "ramp:hang+0.8,kickflip:flip+0.3" -> PNGs
-    if SHOTS:
-        rmod = rm if rm is not None else model; SK.skin(rmod)
-        rmod.vis.global_.offwidth = max(1280, rmod.vis.global_.offwidth); rmod.vis.global_.offheight = max(720, rmod.vis.global_.offheight)
-        rend = mujoco.Renderer(rmod, 720, 1280, max_geom=12000); rdat = mujoco.MjData(rmod); ext = None; shot_done = set()
+    LIVE = os.environ.get("JHS_LIVE", "0") == "1"; LDIR = Path(os.environ.get("JHS_LIVE_DIR", str(OUTD / "live"))); LDIR.mkdir(parents=True, exist_ok=True)
+    STOPF = Path(os.environ.get("JHS_STOP", str(LDIR / "STOP"))); SPEED = float(os.environ.get("JHS_SPEED", "0")); shot_done = set()
+    painter = None
+    if SHOTS or LIVE:
+        from jhs.crabster.view import Painter, caption
+        W_, H_ = (int(os.environ.get("JHS_LIVE_W", 1280)), int(os.environ.get("JHS_LIVE_H", 720))) if LIVE else (1280, 720)
+        painter = Painter(rm if rm is not None else model, W_, H_, CAMERA)
+    import time as _time
+    wall0 = _time.time(); last_live = -1e9; last_status = 0.0
     obs = env.get_observations(); rec = dict(t=[], qpos=[], lift=[], tq=[], push=[], suction=[], gas=[], g=[], phase=[])
     vprev = None; gnow = 1.0; every = max(1, int(round(0.04 / dt)))
     for s in range(int(TMAX / dt)):
@@ -229,15 +235,26 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
         X = sim.data.xfrc_applied; X[0, b, :] = 0
         X[0, b, 0:3] = torch.as_tensor(Fw, dtype=X.dtype); X[0, b, 3:6] = torch.as_tensor(R @ tq + np.cross(arm, Fw), dtype=X.dtype)
         with torch.inference_mode(): obs, _, _, _ = env.step(policy(obs))
-        for sh in SHOTS:
-            key, off = sh.split("+"); a_, ph_ = key.split(":")
-            if sh not in shot_done and show.act == a_ and show.ph == ph_ and t - show.t_ph >= float(off):
-                shot_done.add(sh); model, live = sim.env_mjdata(0); rdat.qpos[:] = live.qpos; mujoco.mj_forward(rmod, rdat)
-                if ext is None: ext = SK.base_extent(rmod, rdat, b)
-                cam = mujoco.MjvCamera(); cam.lookat[:] = rdat.xpos[b]; cam.distance = 1.6; cam.azimuth = -60; cam.elevation = -12
-                rend.update_scene(rdat, cam); SK.spoiler(rend.scene, rdat, b, *ext); SK.flames(rend.scene, rdat, b, lift, tq, push, *ext)
-                from PIL import Image
-                Image.fromarray(rend.render()).save(OUTD / f"shot_{a_}_{ph_}.png"); print("SHOT", sh, flush=True)
+        if painter is not None and (SHOTS or LIVE):
+            snap = dict(lift=lift, tq=tq, push=push, suction=u["suction"], gas=show.tank.gas, g=gnow, phase=f"{show.act}:{show.ph}")
+            for sh in SHOTS:
+                key, off = sh.split("+"); a_, ph_ = key.split(":")
+                if sh not in shot_done and show.act == a_ and show.ph == ph_ and t - show.t_ph >= float(off):
+                    shot_done.add(sh); model, live = sim.env_mjdata(0)
+                    painter.frame(live.qpos.copy(), t, snap, caption(show.events, t), show.results, "sim still").save(OUTD / f"shot_{a_}_{ph_}.png"); print("SHOT", sh, flush=True)
+            if LIVE and t - last_live >= 0.2:
+                last_live = t; model, live = sim.env_mjdata(0); wall = _time.time() - wall0
+                fr = painter.frame(live.qpos.copy(), t, snap, caption(show.events, t), show.results, f"live, {t / wall:.2f}x" if wall > 1 else "live")
+                import io
+                buf = io.BytesIO(); fr.save(buf, "JPEG", quality=82); (LDIR / "live.jpg.tmp").write_bytes(buf.getvalue()); os.replace(LDIR / "live.jpg.tmp", LDIR / "live.jpg")
+        if _time.time() - last_status > 1.0:
+            last_status = _time.time(); wall = last_status - wall0
+            (LDIR / "status.json").write_text(json.dumps(dict(t=round(t, 2), wall=round(wall, 1), rate=round(t / wall, 3) if wall > 1 else None, kind="crabster",
+                                                              state=f"{show.act}: {show.ph}" if show.act else "show over", gas_g=round(show.tank.gas * 1000), results=show.results)))
+        if SPEED > 0:
+            ahead = t / SPEED - (_time.time() - wall0)
+            if ahead > 0.002: _time.sleep(min(ahead, 0.5))
+        if STOPF.exists(): show.events.append(dict(t=round(t, 3), act=show.act, phase="stop", msg="stopped from the page")); break
         if s % every == 0:
             model, live = sim.env_mjdata(0); vn = live.qvel[da:da + 3].copy()
             if vprev is not None: gnow = float(np.linalg.norm((vn - vprev) / (every * dt) + np.array([0, 0, 9.81])) / 9.81)
@@ -247,10 +264,11 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
         if s % int(1.0 / dt) == 0:
             print(f"t={t:5.1f} {show.act}:{show.ph:9s} x={p[0]:+.2f} y={p[1]:+.2f} z={p[2]:.2f} up={R[2, 2]:+.2f} gas={show.tank.gas:.3f} suc={u['suction']:.0f}", flush=True)
         if show.act is None and not show.results[-1:] == []:
-            if t - show.t_ph > 1.0: break
+            if t - show.t_ph > 2.0: break
     np.savez_compressed(OUTD / "qpos.npz", **{k: np.array(v) for k, v in rec.items()})
     (OUTD / "events.jsonl").write_text("".join(json.dumps(e) + "\n" for e in show.events))
-    res = dict(label=LABEL, stunt=STUNT, seed=SEED, results=show.results, gas_left=round(show.tank.gas, 4), gas0=F.GAS0,
+    (OUTD / "vision_meta.json").write_text("[]"); np.savez_compressed(OUTD / "vision_tof.npz", tof=np.zeros((0, 1)))   # no vision in this app
+    res = dict(kind="crabster", t_end=round(float(rec["t"][-1]) if rec["t"] else 0.0, 2), stopped=STOPF.exists(), camera=CAMERA, label=LABEL, stunt=STUNT, seed=SEED, results=show.results, gas_left=round(show.tank.gas, 4), gas0=F.GAS0,
                success=bool(show.results) and all(r["success"] for r in show.results) and len(show.results) == len(show.acts))
     (OUTD / "result.json").write_text(json.dumps(res, indent=1)); print("RESULT", json.dumps(res), flush=True)
 

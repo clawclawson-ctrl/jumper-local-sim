@@ -146,6 +146,17 @@ Choose **Moonlit Ballroom** on the page. It is the first item in the list, and i
 
 The longer guide is section 7d of [README-LOCAL.md](README-LOCAL.md).
 
+### Crabster (SCRIPTED STUNT, SIM-ONLY THRUSTER + SUCTION CONCEPT)
+
+Pick `jumper_crabster_vision.app`. A Jumper crab in a pearl-white Roadster skin (black glass canopy band, red accents, light bar, rear
+spoiler) gets two **sim-only** add-ons: a suction fan and cold-gas (N2) thrusters. Both are real applied forces in MuJoCo, fed from a
+finite 0.6 kg gas tank. On the night stage it climbs a concrete arch tail-first, hangs upside-down on suction, drops, half-rolls and
+lands with a landing burn; then it kickflips over a row of five stylized model cars; or it does a 0-1.5 m/s sprint (sim numbers).
+The official walking policy walks it on the ground; the stunt script fires the add-ons, and on the arch the legs hold a stance pose
+while the boost nozzle drives and suction holds. Landings are physics: a failed stunt is shown and reported as failed.
+Setup: stunt (Both / Ramp / Kickflip / Sprint), camera (Follow / Fixed), seed, Replay. Overlay: label, sim clock, gas, suction, g.
+MP4 at 1x with a title card, optional audio like the other apps. Code: `jhs/crabster/`.
+
 ## Real vs sim-only
 
 | real (from the official toolkit) | sim-only (this repo) |

@@ -22,11 +22,12 @@ def inspect(path) -> dict:
         tanks = "vision/tanks.json" in names
         surround = "vision/surround.json" in names
         warlords = "vision/warlords.json" in names
+        crabster = "vision/crabster.json" in names
         src = z.read(brain).decode("utf-8", "replace") if brain else ""
     here = sysconfig.get_platform()
     own = here in exts or (here.startswith("macosx-") and "macosx-universal2" in exts)
     modes = sorted((b.get("modes") or {}).keys())
-    kind = "warlords" if warlords else "surround" if surround else "tanks" if tanks else "soccer" if soccer else "hide_seek" if brain == "vision/hide_seek.py" else "tidy_vision" if brain else "flybrain" if "flybrain" in modes else "official"
+    kind = "crabster" if crabster else "warlords" if warlords else "surround" if surround else "tanks" if tanks else "soccer" if soccer else "hide_seek" if brain == "vision/hide_seek.py" else "tidy_vision" if brain else "flybrain" if "flybrain" in modes else "official"
     info.update(ok=True, kind=kind, title=title or b.get("name") or p.stem, brain=brain, modes=sorted((b.get("modes") or {}).keys()),
                 controller_platforms=exts, this_platform=here,
                 controller=("the app's own" if own else "built on this computer (mjrl_fsm)"),
@@ -52,6 +53,10 @@ def inspect(path) -> dict:
         info["brain"] = "local sim: jhs/warlords/brain.py (one per crab)"; info["sim_only"] = True; info["local_hooks"] = True
         info["warning"] = ("crab warlords (Atari Warlords): three crabs, one ball, castles of breakable bricks around a king; a ball on your king "
                            "puts you out; last crab standing takes the round. SIM-ONLY VISION CONCEPT: own camera + dToF + pose, brick counts = scoreboard read.")
+    if kind == "crabster":
+        info["brain"] = "local sim: jhs/crabster/run.py (stunt script + official walking policy)"; info["sim_only"] = True; info["local_hooks"] = True
+        info["warning"] = ("Crabster: SCRIPTED STUNT, SIM-ONLY THRUSTER + SUCTION CONCEPT. Sim add-on suction fan and cold-gas nozzles are real applied "
+                           "forces in MuJoCo from a finite tank; the walking is the official policy, the stunts are scripted. Landings are physics and can fail.")
     if kind == "surround":
         info["brain"] = "local sim: jhs/surround/brain.py (one per crab)"; info["sim_only"] = True; info["local_hooks"] = True
         info["warning"] = ("crab surround 1v1 (Atari Surround / light-cycle style): each crab lays a glowing trail wall; touch any wall or "

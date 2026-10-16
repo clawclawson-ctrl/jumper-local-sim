@@ -121,6 +121,14 @@ def surround():
     from jhs.surround import game as SG, brain as SB
     return f"{a.name}: surround; unit tests: " + "; ".join(SG.unit() + SB.unit())
 item("crab surround app + trails + brains (SIM-ONLY)", surround)
+def crabster():
+    a = ROOT / "apps" / "jumper_crabster_vision.app"
+    if not a.exists(): return "apps/jumper_crabster_vision.app not present (skipped)"
+    from jhs.apps import inspect as _insp
+    i = _insp(a); assert i["ok"] and i["kind"] == "crabster", i
+    from jhs.crabster import flight as CF, scene as CS, view as CV
+    return f"{a.name}: Crabster; unit tests: " + "; ".join(CF.unit() + CS.unit() + CV.unit())
+item("Crabster app + thrusters/suction + stage + overlay (SCRIPTED STUNT, SIM-ONLY)", crabster)
 
 
 def warlords():
