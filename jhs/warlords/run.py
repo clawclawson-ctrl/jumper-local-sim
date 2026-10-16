@@ -168,7 +168,9 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
     obs = env.get_observations(); step = 0
     score = {k: 0 for k in K3}; events = []; falls = {k: 0 for k in K3}; fallen = {k: False for k in K3}
     final = None; winner = None; end_at = None; settle_until = 1.5; rounds = []; round_no = 1; round_t0 = 1.5
-    out = {k: None for k in K3}; pending = None; ref_line = "GO!"; banner = None; served = False
+    out = {k: None for k in K3}
+    if TEST: out[K3[2]] = 0.0   # test scene: GREEN pre-eliminated so a RED king hit ends the round
+    pending = None; ref_line = "GO!"; banner = None; served = False
     stall = 0.0; serves = 0; still = {k: 0.0 for k in K3}; max_still = {k: 0.0 for k in K3}; rot_only = {k: 0.0 for k in K3}; max_rot = {k: 0.0 for k in K3}
     t_wall = time.time(); stopped = False; t = 0.0; cmds = {k: {} for k in K3}; P = {k: tuple(START[k][:2]) + (math.radians(START[k][2]),) for k in K3}
     broken_n = 0; cracked = set()
