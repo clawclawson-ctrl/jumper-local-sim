@@ -14,6 +14,7 @@ from . import game as G
 WALK, PUSH = 0.45, 0.42             # stick (x0.8 m/s): ~0.36 m/s walking
 GUARD = G.castle_zone("A") + 0.42   # guard ring radius around my king (front face of the bricks + body + margin)
 SPIN_MAX = 4.0
+DEF_H = float(__import__('os').environ.get('WL_DEF_H', '2.5'))   # s: defend against threats this soon
 LOOK = 0.45                          # m: safety look-ahead along the commanded walk
 
 
@@ -76,7 +77,7 @@ class Brain:
         self.track = G.predict_ball(b, bv, 6.0) if b is not None else []
         th = G.threat(self.team, self.track, 0.35) if b is not None else None
         enemies = [k for k in G.KEYS if k != self.team and not self.out.get(k)]
-        if th is not None and th[0] < 5.0:                    # DEFEND: stand where the ball would reach my castle
+        if th is not None and th[0] < DEF_H:                    # DEFEND: stand where the ball would reach my castle
             q = th[1]; g = self.K + GUARD * unitv(q - self.K)
             if np.linalg.norm(q - self.K) < 1e-6: g = self.K + GUARD * self.inward
             g = self._ring(g); self.state = "defend"; self.sub = f"DEFEND: ball at my castle in {th[0]:.1f}s"; self.counts["defends"] += 1
@@ -89,7 +90,8 @@ class Brain:
                     self.state = "opener"; self.sub = f"OPENER {self.op_name}"
                     return self._go(pose, wp, face=b if b is not None else np.zeros(2))
             self.opening = None
-        reach = 1.6 + 2.6 * self.aggr                         # how far from home I go after the ball
+        a_ = min(1.0, self.aggr + (0.3 if len(enemies) == 1 else 0.0))   # duel: press harder
+        reach = 1.6 + 2.6 * a_                         # how far from home I go after the ball
         slow = bv is not None and float(np.linalg.norm(bv)) < 0.12
         if b is not None and enemies and (np.linalg.norm(b - self.H) < reach or np.linalg.norm(b - me) < 0.8 or (slow and np.linalg.norm(b - me) < 3.5)):
             tgt = min(enemies, key=lambda k: (self.scoreboard.get(k, 26), np.linalg.norm(G.king(k) - b)))
