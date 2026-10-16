@@ -46,6 +46,8 @@ def main():
     ap.add_argument("--rounds-to-win", type=int, default=3, choices=range(1, 11), metavar="1-10", help="surround: first to this many rounds wins (default 3)")
     ap.add_argument("--surround-aggression", type=float, default=60.0, metavar="0-100", help="surround: both crabs, 0 = safe space-seeking, 100 = hunt and cut off (default 60)")
     ap.add_argument("--surround-aggression-red", type=float, default=None, metavar="0-100", help="surround: RED's aggression (overrides --surround-aggression)")
+    ap.add_argument("--ball-speed", type=float, default=1.6, help="warlords: serve speed in m/s (0.3-3.0, default 1.6 = fast ball; 0.7 = the old slow ball)")
+    ap.add_argument("--no-paddle", action="store_true", help="warlords: turn off the sim paddle boost (crab contacts kick the ball like a heavy elastic paddle)")
     ap.add_argument("--warlords-aggression", type=str, default=None, metavar="R,B,G", help="warlords: aggression per crab in %% (RED,BLUE,GREEN; one number = all three; default 60)")
     ap.add_argument("--surround-aggression-blue", type=float, default=None, metavar="0-100", help="surround: BLUE's aggression (overrides --surround-aggression)")
     ap.add_argument("--goals-to-win", type=int, default=3, choices=range(1, 11), metavar="1-10", help="soccer: first to this many goals wins (default 3; --tmax is the cap)")
@@ -250,12 +252,13 @@ def warlords(a, info, audio):
     if a.seed is not None: op.setdefault("seed", a.seed)
     setup["openings"] = op
     if a.camera: setup["camera"] = a.camera
+    setup["ball_speed"] = a.ball_speed; setup["paddle"] = not a.no_paddle
     v = [float(x) for x in (a.warlords_aggression or "60").split(",")]; v = (v * 3)[:3] if len(v) == 1 else v
     ag = dict(zip(("A", "B", "C"), v))
     tmax = a.tmax or 300.0; seed = a.seed if a.seed is not None else (a.random if a.random is not None else 1)
     proc, rd = runner.start_warlords(info["path"], setup=setup, seed=seed, tmax=tmax, speed=0.0 if a.uncapped else 1.0, live=not a.no_live,
                                      physics_hz=a.physics or (200 if a.fast else None), rounds_to_win=a.rounds_to_win, aggression=ag)
-    print(f"run folder: {rd}\n(SIM-ONLY VISION CONCEPT) crab warlords, {tmax:.0f} sim-seconds, first to {a.rounds_to_win}, aggression {ag}", flush=True)
+    print(f"run folder: {rd}\n(SIM-ONLY VISION CONCEPT) crab warlords, {tmax:.0f} sim-seconds, first to {a.rounds_to_win}, aggression {ag}, ball {a.ball_speed} m/s, paddle boost {'off' if a.no_paddle else 'on'}", flush=True)
     try:
         last = 0
         while proc.poll() is None:

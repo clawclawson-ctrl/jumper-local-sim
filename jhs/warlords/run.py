@@ -173,7 +173,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
     pending = None; ref_line = "GO!"; banner = None; served = False
     stall = 0.0; serves = 0; still = {k: 0.0 for k in K3}; max_still = {k: 0.0 for k in K3}; rot_only = {k: 0.0 for k in K3}; max_rot = {k: 0.0 for k in K3}
     t_wall = time.time(); stopped = False; t = 0.0; cmds = {k: {} for k in K3}; P = {k: tuple(START[k][:2]) + (math.radians(START[k][2]),) for k in K3}
-    broken_n = 0; cracked = set()
+    broken_n = 0; cracked = set(); kick_t = {k: 0.0 for k in K3}; kicks = {k: 0 for k in K3}; bv_prev = None
     def ev(kind, **kw):
         e = dict(t=round(t, 2), event=kind, **kw); events.append(e); print(f"[ref] {e}", flush=True)
     def end_round(how, rw):
@@ -246,13 +246,28 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                         q = K + 1.6 * u_; d_ = (K - q) / np.linalg.norm(K - q)          # 2nd shot: through the gap at the king
                         model, live = sim.env_mjdata(0)
                         live.qpos[bqa:bqa + 3] = [q[0], q[1], G.BALL_R + 0.003]; live.qpos[bqa + 3:bqa + 7] = [1, 0, 0, 0]; live.qvel[bda:bda + 6] = 0
-                        live.qvel[bda:bda + 2] = 0.8 * d_; mujoco.mj_forward(model, live); sync(); served = True; ev("test_shot", at=[round(float(v), 2) for v in q])
+                        live.qvel[bda:bda + 2] = G.BALL_SPEED * d_; mujoco.mj_forward(model, live); sync(); served = True; ev("test_shot", at=[round(float(v), 2) for v in q])
             if pending is None and t >= settle_until:
                 if not served: serve(ROUND["serve"]); served = True; serves += 1; ev("serve", angle=round(math.degrees(ROUND["serve"])))
                 # touches from sim truth geometry (the ball's true centre vs the brick / king boxes; a contact can live inside one
                 # env step's physics substeps only, so data.contact at the step end would miss it)
-                bxy = np.array(live.qpos[bqa:bqa + 2], float)
-                hits, kh_ = castles.ball_hit(bxy, G.BALL_R + 0.03)   # within 3 cm = touching (env steps sample the rebound coarsely)
+                bxy = np.array(live.qpos[bqa:bqa + 2], float); bv_ = np.array(live.qvel[bda:bda + 2], float)
+                kicked = False
+                # PADDLE BOOST (sim setting, game.PADDLE): a crab walking into the ball kicks it like a heavy elastic paddle
+                for k in K3:
+                    if out[k] is not None or t < kick_t[k]: continue
+                    jn = model.body_jntadr[base[k]]; qa, da = model.jnt_qposadr[jn], model.jnt_dofadr[jn]
+                    d_ = bxy - live.qpos[qa:qa + 2]; dn = float(np.linalg.norm(d_))
+                    if dn < G.BODY_R + G.BALL_R + 0.03:
+                        n_ = d_ / max(dn, 1e-6); v2 = G.paddle(bv_, np.array(live.qvel[da:da + 2], float), n_)
+                        if np.linalg.norm(v2 - bv_) > 0.05:
+                            live.qvel[bda:bda + 2] = v2; bv_ = v2; kick_t[k] = t + 0.4; kicks[k] += 1; kicked = True
+                # touches: within 3 cm, OR the ball bounced this step (velocity flipped) near a brick/king -- a fast ball can touch
+                # and leave inside one env step's physics substeps (contacts are physical; this only tells the referee)
+                bounced = not kicked and bv_prev is not None and float(np.linalg.norm(bv_ - bv_prev)) > 0.25
+                hits, kh_ = castles.ball_hit(bxy, G.BALL_R + 0.03 + (float(np.linalg.norm(bv_)) * dt if bounced else 0.0))
+                if bounced and len(hits) > 1: hits = [min(hits, key=lambda h: G.brick_dist(bxy, castles.B[h[0]][h[1]]))]
+                bv_prev = bv_
                 if TEST and step % 25 == 0: print(f"[test] t={t:.2f} ball {bxy.round(3).tolist()} v {np.round(live.qvel[bda:bda + 2], 2).tolist()} "
                                                   f"near-brick {min(G.brick_dist(bxy, b_) for b_ in castles.B['A']):.3f}", flush=True)
                 for (k, i) in hits: cracked.add((k, i))                 # touched: it breaks once the ball has bounced off it (real rebound)
@@ -295,7 +310,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
         res = dict(kind="warlords", label="SIM-ONLY VISION CONCEPT", seed=SEED, openings=dict(mode=OPEN_CFG["mode"], seed=OPEN_SEED, rounds=OPEN_LOG),
                    tmax=TMAX, rounds_to_win=ROUNDS_TO_WIN, aggression={G.TEAM[k]: v for k, v in AGGR.items()}, t_end=round(step * dt, 2), stopped=stopped,
                    score={G.TEAM[k]: v for k, v in score.items()}, rounds=rounds, winner=G.TEAM.get(winner) if final else None, final=final,
-                   falls={G.TEAM[k]: v for k, v in falls.items()}, bricks_broken=broken_n, serves=serves, round_max=G.ROUND_MAX,
+                   falls={G.TEAM[k]: v for k, v in falls.items()}, bricks_broken=broken_n, paddle_kicks={G.TEAM[k]: v for k, v in kicks.items()}, ball_speed=G.BALL_SPEED, paddle=G.PADDLE, serves=serves, round_max=G.ROUND_MAX,
                    max_spin_only_s={G.TEAM[k]: round(v, 1) for k, v in max_rot.items()}, max_standing_s={G.TEAM[k]: round(v, 1) for k, v in max_still.items()},
                    brain_counts={G.TEAM[k]: dict(b.counts) for k, b in brains.items()}, wall_s=round(time.time() - t_wall, 1))
         json.dump(res, open(OUTD / "result.json", "w"), indent=1)

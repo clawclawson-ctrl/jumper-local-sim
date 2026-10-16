@@ -35,8 +35,8 @@ def build(src_map, dst_map):
         for k in G.KEYS:                                          # triangle walls: the face opposite corner k
             c = -(G.R_IN + G.WALL_T / 2) * G.U[k]; yaw = math.degrees(G.ANG[k]) + 90.0
             _g(field, f"wl_wall_{k}", pos=f"{c[0]:.4f} {c[1]:.4f} {G.WALL_H / 2}", size=f"{G.SIDE / 2 + 0.25:.3f} {G.WALL_T / 2} {G.WALL_H / 2}",
-               euler=f"0 0 {yaw:.3f}", rgba=WALL_RGBA, **wkw)
-        bk = dict(wkw); bk["type"] = "box"
+               euler=f"0 0 {yaw:.3f}", rgba=WALL_RGBA, **{**wkw, "solref": G.WALL_SOLREF})
+        bk = dict(wkw); bk["type"] = "box"; bk["solref"] = G.WALL_SOLREF   # bouncy, stiff stone (fast ball: restitution ~0.9)
         for k in G.KEYS:
             for i, (x, y, a) in enumerate(G.bricks(k)):
                 _g(field, f"wl_brick_{k}_{i}", pos=f"{x:.4f} {y:.4f} {G.BRICK_H}", size=f"{G.BRICK_L} {G.BRICK_T} {G.BRICK_H}",

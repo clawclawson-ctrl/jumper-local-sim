@@ -11,10 +11,13 @@ from collections import deque
 import numpy as np
 from . import game as G
 
-WALK, PUSH = 0.45, 0.60             # stick (x0.8 m/s): ~0.36 m/s walking, ~0.48 m/s pushing the ball (more king hits, fewer timeouts)
+WALK, PUSH = 0.45, 0.60
+STRIKE = 0.75                        # stick when lined up behind the ball: the paddle boost kicks it at ~2x this real walking speed
+DEF_WALK = 0.60                      # hurry to the intercept spot (the fast ball gives less time)
+PRED_H = 9.0                         # s: bounce-prediction horizon (longer: the fast ball bounces more often)             # stick (x0.8 m/s): ~0.36 m/s walking, ~0.48 m/s pushing the ball (more king hits, fewer timeouts)
 GUARD = G.castle_zone("A") + 0.42   # guard ring radius around my king (front face of the bricks + body + margin)
 SPIN_MAX = 4.0
-DEF_H = float(__import__('os').environ.get('WL_DEF_H', '2.5'))   # s: defend against threats this soon
+DEF_H = float(__import__('os').environ.get('WL_DEF_H', '3.5'))   # s: defend against threats this soon
 LOOK = 0.45                          # m: safety look-ahead along the commanded walk
 
 
@@ -75,14 +78,14 @@ class Brain:
     def _decide(self, pose):
         x, y, yaw = pose; me = np.array([x, y]); t = self.t
         b, bv = self.ball_now()
-        self.track = G.predict_ball(b, bv, 6.0) if b is not None else []
+        self.track = G.predict_ball(b, bv, PRED_H) if b is not None else []
         th = G.threat(self.team, self.track, 0.35) if b is not None else None
         enemies = [k for k in G.KEYS if k != self.team and not self.out.get(k)]
         if th is not None and th[0] < DEF_H:                    # DEFEND: stand where the ball would reach my castle
             q = th[1]; g = self.K + GUARD * unitv(q - self.K)
             if np.linalg.norm(q - self.K) < 1e-6: g = self.K + GUARD * self.inward
             g = self._ring(g); self.state = "defend"; self.sub = f"DEFEND: ball at my castle in {th[0]:.1f}s"; self.counts["defends"] += 1
-            return self._go(pose, g, face=b, speed=WALK)
+            return self._go(pose, g, face=b, speed=DEF_WALK)
         if self.opening is not None:
             if self.op_wps and t - self.opening < 4.0 + 3.0 * (1 - self.aggr):
                 wp = np.array(self.op_wps[0])
@@ -93,7 +96,7 @@ class Brain:
             self.opening = None
         a_ = min(1.0, self.aggr + (0.3 if len(enemies) == 1 else 0.0))   # duel: press harder
         reach = 1.6 + 2.6 * a_                         # how far from home I go after the ball
-        slow = bv is not None and float(np.linalg.norm(bv)) < 0.12
+        slow = bv is not None and float(np.linalg.norm(bv)) < 0.25
         if b is not None and enemies and (np.linalg.norm(b - self.H) < reach or np.linalg.norm(b - me) < 0.8 or (slow and np.linalg.norm(b - me) < 3.5)):
             tgt = min(enemies, key=lambda k: (self.scoreboard.get(k, 26), np.linalg.norm(G.king(k) - b)))
             aim = self.gap_aim(tgt) + G.rot(self.team) @ self.jit; d = unitv(aim - b)
@@ -102,7 +105,7 @@ class Brain:
             self.state = "attack"; self.counts["attacks"] += 1; self.target = tgt
             if along < -0.12 and lat < 0.16:                   # lined up behind the ball: push it through toward the target
                 self.sub = f"ATTACK {G.TEAM[tgt]} ({self.scoreboard.get(tgt, 0)} bricks): push"
-                return self._go(pose, b + 0.6 * d, face=aim, speed=PUSH)
+                return self._go(pose, b + 0.6 * d, face=aim, speed=STRIKE)
             if along > -0.05 and lat < G.BODY_R + 0.12:        # ball between me and my approach spot: go round it
                 side = np.array([-d[1], d[0]]); side = side if rel @ side > 0 else -side
                 wp = b + side * (G.BODY_R + 0.25) - d * 0.15

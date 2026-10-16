@@ -24,9 +24,17 @@ HOME_D = 2.60                                # crab start: this far from its cor
 BALL_R = 0.065
 BODY_R = 0.24                                # crab footprint radius for the kinematic model + clearances (legs reach 0.236 m)
 CLEAR = 0.30                                 # leg clearance from walls / bricks / kings
-BALL_DECEL = float(os.environ.get("WL_BALL_DECEL", "0.015"))   # m/s^2: low-friction ball (rolls for a long time)
-WALL_E = 0.85                                # wall / brick restitution (bouncy walls)
-SERVE_V = 0.70                               # m/s: the referee's serve from the centre (walking crabs ~0.36 m/s cut it off with prediction)
+BALL_DECEL = float(os.environ.get("WL_BALL_DECEL", "0.008"))   # m/s^2: low-friction ball (rolls for a long time)
+WALL_E = 0.90                                # wall / brick restitution (bouncy stone; MuJoCo solref WALL_SOLREF below)
+WALL_SOLREF = "-40000 -12"                   # direct stiffness/damping: zeta ~0.03 -> restitution ~0.9, 1.5 cm max squash at 3 m/s
+BALL_SPEED = float(os.environ.get("WL_BALL_SPEED", "1.6"))     # m/s: serve speed setting ("Ball speed"; was 0.70 before the fast-ball update)
+SERVE_V = BALL_SPEED                         # the referee's serve from the centre
+BALL_VMAX = 3.2                              # m/s: no ball goes faster than this (sanity cap, also bounds tunnelling checks)
+# PADDLE BOOST (sim setting, default ON, WL_PADDLE=0 turns it off): a crab body that walks INTO the ball hits it like a heavy,
+# elastic paddle -- the ball's normal speed leaves at least (1 + PADDLE_E) x the crab's real walking speed along the contact normal
+# (PADDLE_E = 1 is the exact elastic-collision result for a paddle much heavier than the 90 g ball). Nothing fakes the crab's speed.
+PADDLE = os.environ.get("WL_PADDLE", "1") != "0"
+PADDLE_E = 1.0
 STALL_S = 4.0                                # ball slower than 0.04 m/s for this long -> the referee re-serves from the centre
 ROUND_MAX = float(os.environ.get("WL_ROUND_MAX", "150"))
 CASTLE_RGBA = {"A": (0.85, 0.15, 0.10, 1.0), "B": (0.15, 0.30, 0.90, 1.0), "C": (0.10, 0.65, 0.20, 1.0)}
@@ -185,7 +193,24 @@ def aggression_from_env(env):
 
 
 # ---------------- 2D ball/crab contact model (kinematic harness + unit tests; the real sim uses MuJoCo contacts) ----------------
+def paddle(v, cv, n):
+    """ball velocity v after a crab moving at cv touches it along unit normal n (crab -> ball)."""
+    v = np.asarray(v, float); vc = float(np.asarray(cv) @ n)
+    tgt = (1 + PADDLE_E) * vc if PADDLE else vc
+    if vc > 0.02 and v @ n < tgt: v = v + (tgt - v @ n) * n
+    sp = float(np.linalg.norm(v))
+    return v * (BALL_VMAX / sp) if sp > BALL_VMAX else v
+
+
 def ball_step(p, v, dt, crabs, castles, crab_v=None, e_crab=0.6):
+    """substepped so the ball never moves more than BALL_R/3 per step (no tunnelling through 10 cm bricks)."""
+    n = max(1, int(math.ceil(float(np.linalg.norm(v)) * dt / (BALL_R / 3)))); br = []; kh = None
+    for _ in range(n):
+        p, v, b, k = _ball_step(p, v, dt / n, crabs, castles, crab_v, e_crab); br += b; kh = kh or k
+    return p, v, br, kh
+
+
+def _ball_step(p, v, dt, crabs, castles, crab_v=None, e_crab=0.6):
     """advance the ball dt: deceleration, crab pushes (disc BODY_R; the ball takes the crab's normal speed), walls/bricks.
     -> p, v, broken [(k, i)], king_hit k|None."""
     p = np.array(p, float); v = np.array(v, float)
@@ -197,7 +222,7 @@ def ball_step(p, v, dt, crabs, castles, crab_v=None, e_crab=0.6):
         if dn < BODY_R + BALL_R:
             n = d / max(1e-9, dn); rel = v - cv
             if rel @ n < 0: v = v - (1 + e_crab) * (rel @ n) * n
-            v = v + max(0.0, cv @ n - v @ n) * n                    # the body pushes the ball ahead of it
+            v = paddle(v, cv, n)                                    # the body pushes / kicks the ball ahead of it
             p = np.asarray(c[:2]) + n * (BODY_R + BALL_R)
     q = p + v * dt; dd, n = wall_at(q, castles)
     broken, kh = castles.ball_hit(q, BALL_R + 0.01)
@@ -237,6 +262,11 @@ def unit():
     C2 = Castles(); C2.alive["A"] = [False] * C2.total("A"); assert tiebreak(C2, {}) is None
     C2.alive["B"][0] = False; assert tiebreak(C2, {}) == "C"
     out.append("tiebreak: most bricks left")
+    C3 = Castles(); b0 = np.array(C3.B["A"][6][:2]); K = king("A"); u = (b0 - K) / np.linalg.norm(b0 - K)
+    p, v, br, kh = ball_step(b0 + 0.5 * u, -BALL_VMAX * u, 0.25, [], C3)     # 80 cm in one call: substeps must still hit the brick
+    assert br == [("A", 6)] and kh is None and v @ u > 0, "no tunnelling at top speed"
+    v2 = paddle(np.zeros(2), np.array([0.5, 0.0]), np.array([1.0, 0.0])); assert abs(v2[0] - (1 + PADDLE_E) * 0.5) < 1e-9 if PADDLE else True
+    out.append("fast ball: no tunnelling through bricks at 3.2 m/s; paddle boost = elastic heavy paddle")
     return out
 
 

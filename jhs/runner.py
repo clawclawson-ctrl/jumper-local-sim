@@ -240,6 +240,7 @@ def start_warlords(app, setup=None, seed=1, tmax=300.0, speed=1.0, live=True, li
     env.update(VS_SEED=str(int(seed)), VS_OUT=str(rd), VS_TMAX=str(float(tmax)), VS_SAVEVIS="0", JHS_SPEED=str(float(speed)), WL_LIVE="1",
                JHS_LIVE="1" if live else "0", JHS_LIVE_DIR=str(rd / "live"), JHS_STOP=str(rd / "STOP"), WL_SETUP=str(rd / "setup.json"),
                WL_ROUNDS=str(max(1, min(10, int(rounds_to_win)))), JHS_LIVE_W=str(live_size[0]), JHS_LIVE_H=str(live_size[1]),
+               WL_BALL_SPEED=str(max(0.3, min(3.0, float((setup or {}).get("ball_speed", 1.6))))), WL_PADDLE="0" if (setup or {}).get("paddle") is False else "1",
                **{f"WL_AGGR_{k}": str(max(0.0, min(100.0, float(ag.get(k, 60))))) for k in ("A", "B", "C")})
     app_for_play = Path(info["path"])
     if os.environ.get("JHS_FORCE_LOCAL_CONTROLLER") == "1":
