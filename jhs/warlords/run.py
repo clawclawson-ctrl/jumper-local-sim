@@ -232,7 +232,8 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
             if TEST and pending is None and t >= settle_until:      # scripted referee test: the ball is rolled straight at RED's king
                 for t_shot in (1.6, 6.5):
                     if abs(t - t_shot) < dt / 2:
-                        K = G.king("A"); q = K + 1.6 * (-G.U["A"]); d_ = (K - q) / np.linalg.norm(K - q)
+                        K = G.king("A"); gp = castles.gaps("A"); u_ = (np.array(gp[0]) - K) / np.linalg.norm(np.array(gp[0]) - K) if gp else -G.U["A"]
+                        q = K + 1.6 * u_; d_ = (K - q) / np.linalg.norm(K - q)          # 2nd shot: through the gap at the king
                         model, live = sim.env_mjdata(0)
                         live.qpos[bqa:bqa + 3] = [q[0], q[1], G.BALL_R + 0.003]; live.qpos[bqa + 3:bqa + 7] = [1, 0, 0, 0]; live.qvel[bda:bda + 6] = 0
                         live.qvel[bda:bda + 2] = 0.8 * d_; mujoco.mj_forward(model, live); sync(); served = True; ev("test_shot", at=[round(float(v), 2) for v in q])
@@ -241,7 +242,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                 # touches from sim truth geometry (the ball's true centre vs the brick / king boxes; a contact can live inside one
                 # env step's physics substeps only, so data.contact at the step end would miss it)
                 bxy = np.array(live.qpos[bqa:bqa + 2], float)
-                hits, kh_ = castles.ball_hit(bxy, G.BALL_R + 0.015)
+                hits, kh_ = castles.ball_hit(bxy, G.BALL_R + 0.03)   # within 3 cm = touching (env steps sample the rebound coarsely)
                 if TEST and step % 25 == 0: print(f"[test] t={t:.2f} ball {bxy.round(3).tolist()} v {np.round(live.qvel[bda:bda + 2], 2).tolist()} "
                                                   f"near-brick {min(G.brick_dist(bxy, b_) for b_ in castles.B['A']):.3f}", flush=True)
                 for (k, i) in hits: cracked.add((k, i))                 # touched: it breaks once the ball has bounced off it (real rebound)
