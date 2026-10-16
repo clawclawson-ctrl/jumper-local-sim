@@ -24,12 +24,12 @@ class Cam:
         if self.mode == "fixed":
             c.lookat[:] = (0.1, 0.0, 0.55); c.distance = 5.6; c.azimuth = 90.0; c.elevation = -13.0; return c
         ph = phase.split(":")[-1]; air = ph in ("release", "land", "lift", "flip")
-        tgt = np.array([p[0], p[1] * 0.6, max(0.15, p[2] + (0.12 if air else 0.0)), 3.4 if ph in ("climb", "hang", "release") else (2.6 if air else 2.1)])
+        tgt = np.array([p[0], p[1] * 0.6, max(0.15, p[2] * (0.75 if air else 1.0)), 3.4 if ph in ("climb", "hang", "release") else (3.6 if air else 2.1)])
         if self.s is None: self.s = tgt.copy(); self.v = np.zeros(4); self.t = t
-        dt = float(np.clip(t - self.t, 0.0, 0.1)); self.t = t; w = self.W0 * (1.8 if air else 1.0)
+        dt = float(np.clip(t - self.t, 0.0, 0.1)); self.t = t; w = self.W0 * (2.6 if air else 1.0)
         for _ in range(4):
             h = dt / 4; a = w * w * (tgt - self.s) - 2 * w * self.v; self.v += a * h; self.s += self.v * h
-        c.lookat[:] = self.s[:3]; c.distance = float(self.s[3]); c.azimuth = 70.0 + 18.0 * math.sin(t * 0.07); c.elevation = -10.0
+        c.lookat[:] = self.s[:3]; c.distance = float(self.s[3]); c.azimuth = 70.0 + 18.0 * math.sin(t * 0.07); c.elevation = -6.0 if air else -10.0
         return c
 
 
@@ -113,7 +113,7 @@ def unit():
     for k in range(200): c.update(k * 0.04, p, "kickflip:approach")
     assert np.linalg.norm(np.array(c.cam.lookat) - np.array([1.0, 0.0, 0.5])) < 0.02
     for k in range(200): c.update(8 + k * 0.04, p, "kickflip:flip")
-    assert abs(c.cam.lookat[2] - 0.62) < 0.02 and c.cam.distance > 2.5
+    assert abs(c.cam.lookat[2] - 0.375) < 0.02 and c.cam.distance > 3.4
     f = Cam("fixed"); f.update(0, p); assert f.cam.distance > 5
     assert caption([dict(t=1.0, msg="a"), dict(t=2.0, msg="b")], 2.5) == "b" and caption([dict(t=1.0, msg="a")], 9.0) is None
     out.append("overlay draws (title card, gas, suction, g, caller); Follow cam settles on the crab, Fixed is the grandstand")

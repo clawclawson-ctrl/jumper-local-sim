@@ -27,3 +27,8 @@
 - ./run.sh --check ALL OK incl. Crabster unit tests (flight, stage builds/loads, overlay/camera).
 - Runner run Both seed 1: ramp SUCCESS (10 deg off the cars) + kickflip SUCCESS. /workspace/crabster/show.mp4 1080p 25 fps 18.7 s with test audio; stills ramp_inverted.png, mid_kickflip.png, title.png.
 - Known: Follow cam frames the kickflip apex too high (crab near the top edge under the overlay box) -- widen distance in flight next.
+
+## Crabster — chunk 5 (2026-10-16 PT)
+- Follow cam in flight: farther (3.6 m), lower look-at (0.75 z), lower elevation, faster spring -> the crab stays clear of the overlay through the kickflip.
+- show.mp4 re-rendered silent (Both, seed 1, 1x, 1080p, 18.7 s); stills refreshed (title, ramp_inverted, mid_kickflip).
+- Both success: seeds 1, 2, 3, 4, 5 -> 5/5 (ramp landings 6-16 deg off the cars; all five cars cleared each time). Ramp 3/3, kickflip 1/1, sprint 1/1.
