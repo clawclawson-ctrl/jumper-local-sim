@@ -106,12 +106,20 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
     cam = vision.Camera(VW, VH, float(model.cam_fovy[cams["A"][0]]))
     tw, th = (int(v) for v in model.cam_resolution[cams["A"][1]])
     base = {k: mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, PFX[k] + "base_link") for k in PFX}
-    gid = lambda n: mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, n)
+    def gmap(M):                                              # scene geoms by their own name (the attached scene may prefix names)
+        out = {}
+        for g in range(M.ngeom):
+            n = mujoco.mj_id2name(M, mujoco.mjtObj.mjOBJ_GEOM, g) or ""
+            if "wl_" in n: out[n[n.index("wl_"):]] = g
+        return out
+    GM, GMR = gmap(model), gmap(rmodel)
+    gid = lambda n: GM[n]
     BRICK = {k: [gid(f"wl_brick_{k}_{i}") for i in range(len(G.bricks(k)))] for k in K3}; KING = {k: gid(f"wl_king_{k}") for k in K3}
     G2B = {g: (k, i) for k in K3 for i, g in enumerate(BRICK[k])}; G2K = {g: k for k, g in KING.items()}
     ball_b = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "prop:football"); ball_g = {g for g in range(model.ngeom) if model.geom_bodyid[g] == ball_b}
     bj = model.body_jntadr[ball_b]; bqa, bda = model.jnt_qposadr[bj], model.jnt_dofadr[bj]
     CT = {g: (int(model.geom_contype[g]), int(model.geom_conaffinity[g])) for g in G2B}
+    print(f"[setup] castle geoms: bricks {[len(BRICK[k]) for k in K3]} ids A0={BRICK['A'][0]} king A={KING['A']} contype/conaffinity {CT[BRICK['A'][0]]} render model {'shared' if rmodel is model else 'separate'}", flush=True)
     DUE = {"due": True}
     for s in tofs.values():
         _k = s.raycast_kernel
@@ -134,7 +142,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
     def set_brick(k, i, on):
         g = BRICK[k][i]
         for M in {id(model): model, id(rmodel): rmodel}.values():
-            gg = g if M is model else mujoco.mj_name2id(M, mujoco.mjtObj.mjOBJ_GEOM, f"wl_brick_{k}_{i}")
+            gg = g if M is model else GMR[f"wl_brick_{k}_{i}"]
             M.geom_contype[gg], M.geom_conaffinity[gg] = (CT[g] if on else (0, 0)); M.geom_rgba[gg][3] = 1.0 if on else 0.0
     def park_props():
         model, live = sim.env_mjdata(0)

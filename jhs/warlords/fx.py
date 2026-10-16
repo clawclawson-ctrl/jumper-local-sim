@@ -17,5 +17,5 @@ def theme(model):
     n = 0
     for g in range(model.ngeom):
         name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g) or ""
-        if name == "ground" or name.startswith("wl_"): model.geom_matid[g] = -1; n += 1
+        if name == "ground" or "wl_" in name: model.geom_matid[g] = -1; n += 1
     return n
