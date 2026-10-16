@@ -242,10 +242,13 @@ def unit():
     out.append("ball out of view: SEARCH heads for the ball-belief peak (3-way symmetric)")
     # ball against a wall: the staging spot behind it is inside the field with leg clearance (soccer's stage_dir)
     sb = Brain("A"); nb = 0
-    for q in G.wall_release_points(step=0.5):
+    for q0 in G.wall_release_points(step=0.5):
+        q, v = np.array(q0), np.zeros(2); C_ = G.Castles()
+        for _ in range(60): q, v, _, _ = G.ball_step(q, v, 0.05, [], C_)    # where the released ball actually comes to rest / rolls
+        if any(np.linalg.norm(q - G.king(k)) < G.castle_zone(k) for k in G.KEYS): continue   # it broke a brick and rolled into the castle
         for tg in ("B", "C"):
             u = sb.stage_dir(np.array(q), unitv(sb.gap_aim(tg) - np.array(q))); S = np.array(q) - u * (G.BODY_R + G.BALL_R + 0.10)
             nb += obstacle(S)[0] < G.CLEAR - 0.05
     assert nb == 0, nb
-    out.append("ball on a wall / fillet -> staging spot inside the field with leg clearance")
+    out.append("ball released against a wall / junction -> where it rolls to, the staging spot has leg clearance")
     return out

@@ -86,6 +86,8 @@ class WarlordsOverlay:
         MH = int(7.3 * sc_)
         self._panel(d, [mx0 - S(5), my0 - S(4), mx0 + MW + S(5), my0 + MH + S(20)], GOLD)
         d.polygon([P(*G.VERT[k]) for k in G.KEYS], fill=(60, 52, 44), outline=(200, 180, 150))
+        for (_k, _j, A_, B_) in G.FILLETS:                     # junction fillets (stone deflectors), as walls
+            d.line([P(*A_), P(*B_)], fill=(200, 180, 150), width=max(1, S(2)))
         from .belief import X0, Y0, CELL                       # each crab's OWN ball belief (where the ball may be), in its colour
         for k in G.KEYS:
             Bm = (meta.get(k) or {}).get("belief")

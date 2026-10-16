@@ -302,7 +302,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                         break
                 if pending is None and step % 10 == 0:
                     vb = float(np.hypot(*live.qvel[bda:bda + 2])); stall = stall + 10 * dt if (vb < 0.04 and not kicked and not near_) else 0.0
-                    if stall > G.STALL_S and not TEST: cracked.clear(); serve(0.0); serves += 1; stall = 0.0; ev("recentre", at=[round(float(v), 2) for v in bxy])
+                    if stall > G.STALL_S and not TEST: cracked.clear(); serve(0.0); serves += 1; stall = 0.0; ev("recentre", at=[round(float(v), 2) for v in bxy], inside_castle=next((G.TEAM[k] for k in K3 if np.linalg.norm(bxy - G.king(k)) < G.castle_zone(k)), None))
                     if t - round_t0 > G.ROUND_MAX:
                         end_round("time: most bricks left", G.tiebreak(castles, out))
             if step % 10 == 0:

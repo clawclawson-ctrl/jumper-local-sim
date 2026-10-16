@@ -58,9 +58,10 @@ def tri_clear(x, y):
 
 # ---------------- ball-proof walls (ported from the SOCCER field: rounded corners + kick-strip ramps at the wall foot) ----------------
 CORNER_R = 0.45                              # rounded corners (inside each castle, behind the king): circle tangent to both walls
-FIL_H, FIL_A = 0.40, math.radians(35)        # junction fillets: a stone deflector from the castle's outer face (where it is 0.40 m
-                                             # off the wall) down to the wall at 35 deg -> the acute wall/castle wedge is sealed off
-KICK_DEG, KICK_W = 6.0, 0.12                 # kick strip: 12 cm wide, 6 deg ramp along every wall / fillet foot (as in soccer)
+FIL_H, FIL_A = float(os.environ.get("WL_FIL_H", "0")), math.radians(35)        # optional junction fillets (WL_FIL_H > 0: a stone deflector from the castle face
+                                             # where it is FIL_H off the wall down to the wall at 35 deg). OFF by default: at 0.40 m they shielded
+                                             # ~6 of 13 bricks per castle (king-hit rounds 31/60); the wider kick strip alone keeps the junctions clear
+KICK_DEG, KICK_W = float(os.environ.get("WL_KICK_DEG", "6.0")), float(os.environ.get("WL_KICK_W", "0.20"))                 # kick strip: 20 cm wide (soccer: 12 cm), 6 deg ramp along every wall foot
 KICK_A = 9.81 * math.sin(math.radians(KICK_DEG)) * 5 / 7   # m/s^2 a ball rolling down the strip gains (rolling sphere)
 
 
@@ -78,7 +79,7 @@ def _fillets():
             B = F + t * (A @ U[j] + R_IN) / math.tan(FIL_A) - 0.01 * U[j]             # ends just inside the wall: no seam
             out.append((k, j, A, B))
     return out
-FILLETS = _fillets()
+FILLETS = _fillets() if FIL_H > 0 else []
 CORNER_C = {k: VERT[k] - 2 * CORNER_R * U[k] for k in KEYS}
 _UK = np.array([U[k] for k in KEYS])
 
@@ -152,6 +153,13 @@ def wall_release_points(step=0.25):
         for s_ in np.arange(-SIDE / 2, SIDE / 2, step):
             q = F0 + s_ * t + (BALL_R + 0.002) * U[j]
             if field_clear(*q) > BALL_R - 0.01 and all(np.linalg.norm(q - king(k)) > castle_zone(k) + BALL_R for k in KEYS): pts.append(q)
+    for k in KEYS:                                                   # wall / castle junctions: the ball touching both (in the wedge)
+        K = king(k); Ro = BRICK_ROWS[-1] + BRICK_T + BALL_R + 0.002
+        th = np.linspace(0, 2 * math.pi, 3601); Pc = K + Ro * np.c_[np.cos(th), np.sin(th)]
+        for j in KEYS:
+            if j == k: continue
+            c = Pc @ U[j] + R_IN; i = np.where(np.abs(c - BALL_R - 0.002) < 0.004)[0]
+            if len(i) and field_clear(*Pc[i[0]]) > BALL_R - 0.01: pts.append(max((Pc[q] for q in i), key=lambda q: np.linalg.norm(q - VERT[k])))
     for (k, j, A, B) in FILLETS:
         nf = np.array([-(B - A)[1], (B - A)[0]]); nf /= np.linalg.norm(nf); nf = nf if (-A) @ nf > 0 else -nf
         for f in np.linspace(0.0, 1.0, 9):
@@ -382,6 +390,8 @@ def unit():
     out = []
     assert abs(tri_clear(0, 0) - R_IN) < 1e-9 and abs(tri_clear(*VERT["A"])) < 1e-9
     # angled-wall bounce: ball heading straight at RED's-side... the wall opposite GREEN's corner (y = -R_IN) and an angled wall
+    global KICK_A
+    _ka = KICK_A; KICK_A = 0.0                              # pure restitution check (kick strip off)
     tr = predict_ball((0, 0), (0, -0.5), 8.0)
     ys = [p[1] for _, p, _ in tr]; assert min(ys) > -R_IN and tr[-1][2][1] > 0, "bounces off the bottom wall"
     d = -U["C"] * 0 + np.array([math.cos(math.radians(30)), math.sin(math.radians(30))])   # toward the right wall (normal -U_A)
@@ -389,6 +399,7 @@ def unit():
     hit = next((i for i, (_, p, v) in enumerate(tr) if v @ U["A"] > 0), None)
     assert hit is not None and all(tri_clear(*p) > BALL_R - 0.02 for _, p, _ in tr), "reflects off the angled wall"
     v_in, v_out = tr[hit - 1][2], tr[hit][2]; assert abs(abs(v_out @ U["A"]) / abs(v_in @ U["A"]) - WALL_E_OUT) < 0.2, "restitution along the angled normal"
+    KICK_A = _ka
     out.append("angled-wall bounce prediction (normal reflection, restitution)")
     C = Castles(); nb = C.total("A")
     assert nb == C.total("B") == C.total("C") and nb >= 10, nb
