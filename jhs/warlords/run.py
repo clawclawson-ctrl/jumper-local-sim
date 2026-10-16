@@ -27,6 +27,7 @@ START = {k: list(G.jittered_start(k, ROUND[k]["jit"])) for k in G.KEYS}
 VW, VH, VIS_DT = 640, 480, 0.1
 PARK = {"A": (-3.9, 3.2, 0.0), "B": (3.9, 3.2, 180.0), "C": (-3.9, 4.4, 0.0)}   # eliminated crabs wait here, outside the walls
 K3 = G.KEYS
+TEST = os.environ.get("WL_TEST") == "castle"     # referee test scene: crabs stand still, the ball is rolled at RED's castle three times
 
 sys.path.insert(0, str(REPO / "scripts"))
 _spec = importlib.util.spec_from_file_location("play", REPO / "scripts" / "play.py")
@@ -162,7 +163,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
     out = {k: None for k in K3}; pending = None; ref_line = "GO!"; banner = None; served = False
     stall = 0.0; serves = 0; still = {k: 0.0 for k in K3}; max_still = {k: 0.0 for k in K3}; rot_only = {k: 0.0 for k in K3}; max_rot = {k: 0.0 for k in K3}
     t_wall = time.time(); stopped = False; t = 0.0; cmds = {k: {} for k in K3}; P = {k: tuple(START[k][:2]) + (math.radians(START[k][2]),) for k in K3}
-    broken_n = 0
+    broken_n = 0; cracked = set()
     def ev(kind, **kw):
         e = dict(t=round(t, 2), event=kind, **kw); events.append(e); print(f"[ref] {e}", flush=True)
     def end_round(how, rw):
@@ -184,12 +185,12 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                 final = (f"{G.TEAM[winner]} WINS" if winner else "DRAW") + " (time)"; ref_line = f"time: {final}"; ev("full_time", final=final)
                 end_at = t + 2.0; pending = ("over", t)
             if step == 2:
-                for k in K3: place_robot(k, *START[k])
+                for k in K3: place_robot(k, *(PARK[k] if TEST else START[k]))      # test scene: crabs wait outside, the line to RED's king is clear
                 park_props(); serve(-math.pi / 2); 
                 model, live = sim.env_mjdata(0); live.qvel[bda:bda + 6] = 0; mujoco.mj_forward(model, live); sync()
             model, live = sim.env_mjdata(0)
             if step % vis_every == 0 and t > 0.3:
-                metas = {}; bpos = [float(v) for v in live.xpos[ball_b][:2]]
+                metas = {}; bpos = [float(v) for v in live.qpos[bqa:bqa + 2]]
                 for k in K3:
                     pose = truth_pose(k); P[k] = pose; br = brains[k]
                     br.scoreboard = {j: castles.left(j) for j in K3}; br.gaps = {j: castles.gaps(j) for j in K3}; br.out = {j: bool(out[j]) for j in K3}
@@ -206,7 +207,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                             (OUTD / "vis").mkdir(exist_ok=True); imageio.imwrite(OUTD / "vis" / f"{k}_{t:06.1f}.jpg", img, quality=88)
                     else: p = dict(ball=[], crabs=[])
                     playing = pending is None and out[k] is None and t >= settle_until
-                    if playing:
+                    if playing and not TEST:
                         try: cmds[k] = br.decide(pose)
                         except Exception as e: cmds[k] = {}; ev("brain_error", team=G.TEAM[k], error=repr(e)[:200])
                     else: cmds[k] = {}
@@ -228,24 +229,35 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
             if HOOK is not None and HOOK.step(t) == "stop": stopped = True; break
             # ---------------- referee (sim truth) ----------------
             model, live = sim.env_mjdata(0)
+            if TEST and pending is None and t >= settle_until:      # scripted referee test: the ball is rolled straight at RED's king
+                for t_shot in (1.6, 6.5):
+                    if abs(t - t_shot) < dt / 2:
+                        K = G.king("A"); q = K + 1.6 * (-G.U["A"]); d_ = (K - q) / np.linalg.norm(K - q)
+                        model, live = sim.env_mjdata(0)
+                        live.qpos[bqa:bqa + 3] = [q[0], q[1], G.BALL_R + 0.003]; live.qpos[bqa + 3:bqa + 7] = [1, 0, 0, 0]; live.qvel[bda:bda + 6] = 0
+                        live.qvel[bda:bda + 2] = 0.8 * d_; mujoco.mj_forward(model, live); sync(); served = True; ev("test_shot", at=[round(float(v), 2) for v in q])
             if pending is None and t >= settle_until:
                 if not served: serve(ROUND["serve"]); served = True; serves += 1; ev("serve", angle=round(math.degrees(ROUND["serve"])))
-                for c_ in live.contact[:live.ncon] if live.ncon else []:
-                    g1, g2 = int(c_.geom1), int(c_.geom2)
-                    o = g2 if g1 in ball_g else g1 if g2 in ball_g else None
-                    if o is None: continue
-                    if o in G2B:
-                        k, i = G2B[o]
-                        if castles.alive[k][i]: castles.alive[k][i] = False; set_brick(k, i, False); broken_n += 1; ev("brick", castle=G.TEAM[k], i=i, left=castles.left(k))
-                    elif o in G2K and out[G2K[o]] is None:
-                        kk = G2K[o]; out[kk] = round(t, 1); ev("king_hit", team=G.TEAM[kk]); place_robot(kk, *PARK[kk])
+                # touches from sim truth geometry (the ball's true centre vs the brick / king boxes; a contact can live inside one
+                # env step's physics substeps only, so data.contact at the step end would miss it)
+                bxy = np.array(live.qpos[bqa:bqa + 2], float)
+                hits, kh_ = castles.ball_hit(bxy, G.BALL_R + 0.015)
+                if TEST and step % 25 == 0: print(f"[test] t={t:.2f} ball {bxy.round(3).tolist()} v {np.round(live.qvel[bda:bda + 2], 2).tolist()} "
+                                                  f"near-brick {min(G.brick_dist(bxy, b_) for b_ in castles.B['A']):.3f}", flush=True)
+                for (k, i) in hits: cracked.add((k, i))                 # touched: it breaks once the ball has bounced off it (real rebound)
+                for (k, i) in list(cracked):
+                    if G.brick_dist(bxy, castles.B[k][i]) > G.BALL_R + 0.03:
+                        cracked.discard((k, i)); castles.alive[k][i] = False; set_brick(k, i, False); broken_n += 1; ev("brick", castle=G.TEAM[k], i=i, left=castles.left(k))
+                for kk in ([kh_] if kh_ else []):
+                    if out[kk] is None:
+                        kk = kk; out[kk] = round(t, 1); ev("king_hit", team=G.TEAM[kk]); place_robot(kk, *PARK[kk])
                         alive = [k for k in K3 if out[k] is None]
                         if len(alive) == 1: end_round("king hit", alive[0])
                         else: serve(float(ORNG.uniform(0, 2 * math.pi))); serves += 1
                         break
                 if pending is None and step % 10 == 0:
                     vb = float(np.hypot(*live.qvel[bda:bda + 2])); stall = stall + 10 * dt if vb < 0.04 else 0.0
-                    if stall > G.STALL_S: serve(float(ORNG.uniform(0, 2 * math.pi))); serves += 1; stall = 0.0; ev("reserve")
+                    if stall > G.STALL_S and not TEST: serve(float(ORNG.uniform(0, 2 * math.pi))); serves += 1; stall = 0.0; ev("reserve")
                     if t - round_t0 > G.ROUND_MAX:
                         end_round("time: most bricks left", G.tiebreak(castles, out))
             if step % 10 == 0:
@@ -256,7 +268,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                 if pending is not None and pending[0] == "pause" and t - pending[1] > 3.0:
                     if winner is not None: end_at = t + 0.5; pending = ("over", t)
                     else:                              # referee reset: bricks back, crabs re-placed, new openers, serve
-                        ROUND = G.roll_round(ORNG, OPEN_CFG); castles.reset()
+                        ROUND = G.roll_round(ORNG, OPEN_CFG); castles.reset(); cracked.clear()
                         for k in K3:
                             for i in range(castles.total(k)): set_brick(k, i, True)
                             place_robot(k, *G.jittered_start(k, ROUND[k]["jit"])); brains[k].reset(t); brains[k].set_opening(ROUND[k], t)

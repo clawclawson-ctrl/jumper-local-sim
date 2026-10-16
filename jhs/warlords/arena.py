@@ -56,6 +56,8 @@ def build(src_map, dst_map):
                    rgba="1.0 0.62 0.15 1", contype="0", conaffinity="0", group="1")
                 ET.SubElement(wb, "light", {"name": f"wl_torchlight_{k}{'p' if sgn > 0 else 'm'}", "pos": f"{T[0]:.3f} {T[1]:.3f} 0.6", "dir": "0 0 -1",
                                             "diffuse": "0.22 0.15 0.07", "specular": "0.05 0.04 0.02", "attenuation": "1 0.1 0.25", "castshadow": "false"})
+        for bd in list(wb):                                       # the room's static stair / planter blocks are not part of this game
+            if bd.tag == "body" and (bd.get("name") or "").startswith(("stair_", "planter")): wb.remove(bd)
         for g in wb.iter("geom"):
             if g.get("name") == "ground": g.set("rgba", STONE_FLOOR)
         for b in wb.iter("body"):
