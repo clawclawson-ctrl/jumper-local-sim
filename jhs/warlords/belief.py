@@ -21,7 +21,7 @@ NX, NY = int(math.ceil(2 * G.R_OUT / CELL)), int(math.ceil((G.R_OUT + G.R_IN) / 
 UK = np.array([G.U[k] for k in G.KEYS])
 
 
-def _inside(P, m=G.BALL_R): return (P @ UK.T + G.R_IN).min(1) > m
+def _inside(P, m=G.BALL_R): return G.field_cn(P)[0] > m
 
 
 def visible(P, pose):
@@ -53,12 +53,12 @@ class BallBelief:
 
     def step(self, dt, pose=None):
         """roll on (decel + angled-wall bounces), regrow over unseen floor, clear what I can see."""
+        self.V += G.kick_acc(self.P) * dt                      # kick strips at the wall foot
         sp = np.hypot(self.V[:, 0], self.V[:, 1]); f = np.maximum(0.0, sp - G.BALL_DECEL * dt) / np.maximum(sp, 1e-9)
         self.V *= f[:, None]; Q = self.P + self.V * dt
-        c = Q @ UK.T + G.R_IN                                  # clearance to each wall
-        for j in range(3):
-            hit = (c[:, j] < G.BALL_R) & (self.V @ UK[j] < 0)
-            self.V[hit] -= (1 + G.WALL_E_OUT) * (self.V[hit] @ UK[j])[:, None] * UK[j]
+        c, n = G.field_cn(Q)                                   # walls, rounded corners, fillets
+        hit = (c < G.BALL_R) & ((self.V * n).sum(1) < 0)
+        self.V[hit] -= (1 + G.WALL_E_OUT) * (self.V[hit] * n[hit]).sum(1)[:, None] * n[hit]
         Q = np.where(_inside(Q)[:, None], Q, self.P + self.V * dt); Q = np.where(_inside(Q, 0.0)[:, None], Q, self.P)
         self.P = Q
         m = self.rng.random(self.n) < REGROW

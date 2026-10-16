@@ -28,7 +28,7 @@ def unitv(v): n = float(np.linalg.norm(v)); return v / n if n > 1e-9 else np.zer
 
 def obstacle(p, castles_alive=None):
     """(clearance from my body centre to the nearest wall / castle, outward normal). Castles as solid discs (planning)."""
-    best = (G.tri_clear(*p), G.tri_normal(*p))
+    c_, n_ = G.field_cn(np.array([p])); best = (float(c_[0]), n_[0])     # walls + rounded corners + junction fillets
     for k in G.KEYS:
         K = G.king(k); d = float(np.linalg.norm(p - K)) - G.castle_zone(k)
         if d < best[0]: best = (d, unitv(p - K))

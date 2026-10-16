@@ -56,6 +56,99 @@ def tri_clear(x, y):
     p = np.array([x, y]); return float(min(p @ U[k] + R_IN for k in KEYS))
 
 
+# ---------------- ball-proof walls (ported from the SOCCER field: rounded corners + kick-strip ramps at the wall foot) ----------------
+CORNER_R = 0.45                              # rounded corners (inside each castle, behind the king): circle tangent to both walls
+FIL_H, FIL_A = 0.40, math.radians(35)        # junction fillets: a stone deflector from the castle's outer face (where it is 0.40 m
+                                             # off the wall) down to the wall at 35 deg -> the acute wall/castle wedge is sealed off
+KICK_DEG, KICK_W = 6.0, 0.12                 # kick strip: 12 cm wide, 6 deg ramp along every wall / fillet foot (as in soccer)
+KICK_A = 9.81 * math.sin(math.radians(KICK_DEG)) * 5 / 7   # m/s^2 a ball rolling down the strip gains (rolling sphere)
+
+
+def _fillets():
+    out = []
+    for k in KEYS:
+        K = VERT[k] - KING_D * U[k]; Ro = BRICK_ROWS[-1] + BRICK_T
+        for j in KEYS:
+            if j == k: continue
+            th = np.linspace(0, 2 * math.pi, 3601); P = K + Ro * np.c_[np.cos(th), np.sin(th)]
+            c = P @ U[j] + R_IN; i = np.where(np.abs(c - FIL_H) < 0.004)[0]
+            A = max((P[q] for q in i), key=lambda q: np.linalg.norm(q - VERT[k]))
+            A = K + (Ro - 0.02) * (A - K) / np.linalg.norm(A - K)                     # a little into the castle face: no seam
+            F = A - (A @ U[j] + R_IN) * U[j]; t = (F - VERT[k]) / np.linalg.norm(F - VERT[k])
+            B = F + t * (A @ U[j] + R_IN) / math.tan(FIL_A) - 0.01 * U[j]             # ends just inside the wall: no seam
+            out.append((k, j, A, B))
+    return out
+FILLETS = _fillets()
+CORNER_C = {k: VERT[k] - 2 * CORNER_R * U[k] for k in KEYS}
+
+
+def field_cn(P):
+    """vectorised: clearance of points P (n, 2) to the arena's fixed stone (triangle walls, rounded corners, junction fillets)
+    and the inward unit normal there. Behind a fillet (the sealed wedge) the clearance is negative."""
+    P = np.atleast_2d(np.asarray(P, float)); UK = np.array([U[k] for k in KEYS])
+    c = P @ UK.T + R_IN; j = np.argmin(c, 1); best = c[np.arange(len(P)), j]; nrm = UK[j].copy()
+    for k in KEYS:
+        r = (P - VERT[k]) @ U[k] > -1.5 * CORNER_R
+        if r.any():
+            d = P[r] - CORNER_C[k]; dn = np.maximum(np.hypot(d[:, 0], d[:, 1]), 1e-9); cc = CORNER_R - dn
+            m = cc < best[r]; ii = np.where(r)[0][m]; best[ii] = cc[m]; nrm[ii] = -(d[m] / dn[m, None])
+    for (k, j, A, B) in FILLETS:
+        AB = B - A; L2 = AB @ AB; s = np.clip((P - A) @ AB / L2, 0, 1); Q = A + s[:, None] * AB; D = P - Q
+        dn = np.maximum(np.hypot(D[:, 0], D[:, 1]), 1e-9)
+        nf = np.array([-AB[1], AB[0]]) / math.sqrt(L2)
+        if (np.zeros(2) - A) @ nf < 0: nf = -nf                                          # the fillet's face toward the arena
+        inside = (s > 0) & (s < 1); side = (P - A) @ nf
+        cc = np.where(inside, side, dn); nn = np.where(inside[:, None], nf[None, :], D / dn[:, None])
+        m = cc < best; best[m] = cc[m]; nrm[m] = nn[m]
+    return best, nrm
+
+
+def kick_acc(P):
+    """vectorised: the kick strip's push on a ball centred at P (it rolls down the ramp, away from the wall foot)."""
+    c, n = field_cn(P); on = (c < BALL_R + KICK_W) & (c > 0)
+    return np.where(on[:, None], n * KICK_A, 0.0)
+
+
+def wall_release_points(step=0.25):
+    """spots where a ball rests against the fixed stone: along each wall (outside the castles), on each fillet face, and in the
+    wall/fillet and fillet/castle junctions."""
+    pts = []
+    for j in KEYS:
+        t = np.array([-U[j][1], U[j][0]]); F0 = -R_IN * U[j]
+        for s_ in np.arange(-SIDE / 2, SIDE / 2, step):
+            q = F0 + s_ * t + (BALL_R + 0.002) * U[j]
+            if field_clear(*q) > BALL_R - 0.01 and all(np.linalg.norm(q - king(k)) > castle_zone(k) + BALL_R for k in KEYS): pts.append(q)
+    for (k, j, A, B) in FILLETS:
+        nf = np.array([-(B - A)[1], (B - A)[0]]); nf /= np.linalg.norm(nf); nf = nf if (-A) @ nf > 0 else -nf
+        for f in np.linspace(0.0, 1.0, 9):
+            q = A + f * (B - A) + (BALL_R + 0.002) * nf
+            for _ in range(30):                                      # settle the junction spots out of overlaps
+                c, n = wall_at(q, Castles()); 
+                if c >= BALL_R: break
+                q = q + n * (BALL_R + 0.002 - c)
+            pts.append(q)
+    return pts
+
+
+def unreachable_spots(step=0.15):
+    """ball spots (outside the castles) no crab body can touch: the crab centre must keep its planning clearance (CLEAR - 0.05) from
+    walls, fillets and castle discs and come within BODY_R + BALL_R + 0.03 of the ball."""
+    xs = np.arange(-R_OUT, R_OUT, step); P = np.array([(x, y) for x in xs for y in np.arange(-R_IN, R_OUT, step)])
+    c, _ = field_cn(P); P = P[c > BALL_R]
+    P = P[np.array([all(np.linalg.norm(p - king(k)) > castle_zone(k) + BALL_R for k in KEYS) for p in P])]
+    a = np.linspace(0, 2 * math.pi, 24, endpoint=False); ring = (BODY_R + BALL_R + 0.02) * np.c_[np.cos(a), np.sin(a)]
+    bad = []
+    for p in P:
+        Cc = p + ring; cc, _ = field_cn(Cc)
+        for k in KEYS: cc = np.minimum(cc, np.linalg.norm(Cc - king(k), axis=1) - castle_zone(k))
+        if cc.max() < CLEAR - 0.05: bad.append(tuple(np.round(p, 2)))
+    return bad
+
+
+def field_clear(x, y): return float(field_cn(np.array([[x, y]]))[0][0])
+def field_normal(x, y): return field_cn(np.array([[x, y]]))[1][0]
+
+
 def tri_normal(x, y):
     """inward unit normal of the nearest wall."""
     p = np.array([x, y]); k = min(KEYS, key=lambda k: p @ U[k] + R_IN); return U[k].copy()
@@ -120,12 +213,13 @@ class Castles:
 
 def rest_e(p, castles=None):
     """restitution of the solid nearest to p: outer wall WALL_E_OUT, bricks / kings WALL_E."""
-    return WALL_E_OUT if tri_clear(*p) <= wall_at(p, castles)[0] + 1e-9 else WALL_E
+    return WALL_E_OUT if field_clear(*p) <= wall_at(p, castles)[0] + 1e-9 else WALL_E
 
 
 def wall_at(p, castles=None):
     """the solid things a ball can bounce off at p: (clearance, inward normal). Walls + intact bricks + kings."""
-    best = (tri_clear(*p), tri_normal(*p))
+    c_, n_ = field_cn(np.array([p]))
+    best = (float(c_[0]), n_[0])
     if castles is not None:
         for k in KEYS:
             K = king(k)
@@ -145,6 +239,7 @@ def predict_ball(p, v, horizon, castles=None, step=0.05):
     -> list of (t, p, v)."""
     p = np.array(p, float); v = np.array(v, float); t = 0.0; out = []
     while t < horizon - 1e-9:
+        v = v + kick_acc(p[None])[0] * step                    # kick strip at the wall foot
         sp = float(np.linalg.norm(v))
         if sp < 1e-3: out.append((t, p.copy(), v.copy())); break
         v = v * max(0.0, sp - BALL_DECEL * step) / sp; q = p + v * step
@@ -226,7 +321,7 @@ def ball_step(p, v, dt, crabs, castles, crab_v=None, e_crab=0.6):
 def _ball_step(p, v, dt, crabs, castles, crab_v=None, e_crab=0.6):
     """advance the ball dt: deceleration, crab pushes (disc BODY_R; the ball takes the crab's normal speed), walls/bricks.
     -> p, v, broken [(k, i)], king_hit k|None."""
-    p = np.array(p, float); v = np.array(v, float)
+    p = np.array(p, float); v = np.array(v, float) + kick_acc(np.array([p]))[0] * dt
     sp = float(np.linalg.norm(v))
     if sp > 1e-6: v = v * max(0.0, sp - BALL_DECEL * dt) / sp
     for j, (c, cv) in enumerate(zip(crabs, crab_v or [np.zeros(2)] * len(crabs))):
@@ -275,14 +370,24 @@ def unit():
     C2 = Castles(); C2.alive["A"] = [False] * C2.total("A"); assert tiebreak(C2, {}) is None
     C2.alive["B"][0] = False; assert tiebreak(C2, {}) == "C"
     out.append("tiebreak: most bricks left")
-    C3 = Castles(); b0 = np.array(C3.B["A"][6][:2]); K = king("A"); u = (b0 - K) / np.linalg.norm(b0 - K)
+    C3 = Castles(); b0 = np.array(C3.B["A"][3][:2]); K = king("A"); u = (b0 - K) / np.linalg.norm(b0 - K)
     p, v, br, kh = ball_step(b0 + 0.5 * u, -BALL_VMAX * u, 0.25, [], C3)     # 80 cm in one call: substeps must still hit the brick
-    assert br == [("A", 6)] and kh is None and v @ u > 0, "no tunnelling at top speed"
+    assert br == [("A", 3)] and kh is None and v @ u > 0, "no tunnelling at top speed"
     v2 = paddle(np.zeros(2), np.array([0.5, 0.0]), np.array([1.0, 0.0])); assert abs(v2[0] - (1 + PADDLE_E) * 0.5) < 1e-9 if PADDLE else True
     p, v, br, kh = ball_step(np.array([0.0, -R_IN + 0.4]), np.array([0.0, -BALL_VMAX]), 0.3, [], Castles())
     assert tri_clear(*p) > 0 and v[1] > 0 and abs(v[1] / BALL_VMAX - WALL_E_OUT) < 0.05, (p, v)
     out.append("fast ball: no tunnelling through bricks at 3.2 m/s; paddle boost = elastic heavy paddle")
     out.append(f"outer wall near-elastic (e={WALL_E_OUT}), no tunnelling at 3.2 m/s")
+    # ball-proof walls: a ball released AT REST against every wall stretch, rounded corner, fillet and junction rolls >= 0.3 m into play
+    rel = wall_release_points(); C4 = Castles()
+    for q in rel:
+        p, v = np.array(q), np.zeros(2)
+        for _ in range(80): p, v, _, _ = ball_step(p, v, 0.05, [], C4)
+        assert np.linalg.norm(p - q) >= 0.3, (q, p)
+    out.append(f"ball at rest against {len(rel)} wall / corner / fillet / junction spots rolls >= 0.3 m into play")
+    bad = unreachable_spots()
+    assert not bad, bad[:5]
+    out.append("no unreachable pockets: every resting ball spot outside the castles can be touched by a crab")
     return out
 
 
