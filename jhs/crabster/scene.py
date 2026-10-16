@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib, json, math, zipfile, xml.etree.ElementTree as ET
 from pathlib import Path
 
-ARCH_X, ARCH_R, ARCH_W, ARCH_T, ARCH_N = 1.0, 1.00, 0.80, 0.06, 40   # loop starts (tangent to the floor) at x = ARCH_X
+ARCH_X, ARCH_R, ARCH_W, ARCH_T, ARCH_N = 1.0, 1.00, 1.40, 0.06, 40   # loop starts (tangent to the floor) at x = ARCH_X
 CARS_X = -0.85                                                          # the row (cars side by side along y, broadside to the crab)
 SPRINT_Y = -1.6                                                         # sprint lane
 START = {"ramp": (-0.2, 0.0, 180.0), "kickflip": (0.3, 0.0, 180.0), "sprint": (-2.6, SPRINT_Y, 0.0)}
@@ -51,7 +51,7 @@ def build(src_map, dst_map):
         ET.SubElement(vis, "headlight", ambient="0.06 0.06 0.09", diffuse="0.15 0.15 0.2", specular="0 0 0")
         ET.SubElement(vis, "quality", shadowsize="4096")
         st = ET.SubElement(wb, "body", name="crabster_stage")
-        conc = dict(rgba="0.62 0.62 0.6 1", friction="0.45 0.02 0.002", condim="3")   # polished concrete
+        conc = dict(rgba="0.62 0.62 0.6 1", friction="0.30 0.02 0.002", condim="3", priority="2")   # polished concrete; priority so its friction wins over the feet (MuJoCo takes the max otherwise)
         for i in range(ARCH_N):                                 # the arch: tangent slabs just outside the loop circle
             a0, a1 = math.pi * i / ARCH_N, math.pi * (i + 1) / ARCH_N; am = (a0 + a1) / 2
             (px, pz), (nx, nz) = arch_point(am); half = ARCH_R * math.tan((a1 - a0) / 2) + 0.004

@@ -12,15 +12,20 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent.parent))
-from jhs.crabster import flight as F, scene as S  # noqa: E402
+from jhs.crabster import flight as F, scene as S, skin as SK  # noqa: E402
 
 REPO = Path(os.environ.get("JUMPER_REPO", str(HERE.parent.parent / "toolkit")))
 STUNT = os.environ.get("CB_STUNT", "both").lower()
 SEED = int(os.environ.get("VS_SEED", "1")); TMAX = float(os.environ.get("VS_TMAX", "60"))
 OUTD = Path(os.environ.get("VS_OUT", "crabster_run")); OUTD.mkdir(parents=True, exist_ok=True)
 LABEL = "CRABSTER -- SCRIPTED STUNT, SIM-ONLY THRUSTER + SUCTION CONCEPT"
+ROLL_T = 0.45             # s, the half roll after release
+YAW_T = 1.0               # s, the half twist that turns it to face the cars
 BOOST_MAX = 18.0          # N, fore-aft boost nozzle (sprint / flights)
-CLIMB_MAX = 45.0          # N, the same nozzle at climb power on the arch
+CLIMB_MAX = 45.0
+RELIEF = float(os.environ.get("CB_RELIEF", 1.0))   # fraction of the crab's weight the nozzles carry on the arch
+TUCK = float(os.environ.get("CB_TUCK", 0.0))      # legs-tucked skate pose: blend of default stance (0) and the gait pose (1)
+SUC_MIN = float(os.environ.get("CB_SUC", 20.0))     # N, suction normal force floor on the arch          # N, the same nozzle at climb power on the arch
 rng = np.random.default_rng(SEED)
 x0, y0, h0 = S.START["sprint" if STUNT == "sprint" else ("kickflip" if STUNT == "kickflip" else "ramp")]
 x0 += rng.uniform(-0.05, 0.05); y0 += rng.uniform(-0.03, 0.03); h0 += rng.uniform(-2, 2)
@@ -91,30 +96,39 @@ class Show:
                 if p[0] > cx - 0.35: self.go("climb", t, "suction fan ON -- climbing the arch")
                 elif dt_ph > 15: self.finish(t, False, "never reached the arch")
             elif ph == "climb":
-                self.suction = True; out["fwd"] = -0.8
+                self.suction = True; out["tuck"] = th > math.radians(10); out["fwd"] = 0.0 if out["tuck"] else -0.8
                 # boost nozzle along the crab's heading keeps it moving up the wall (P on speed along the surface)
-                vs = float(v @ hdg); out["push"] = hdg * float(np.clip(self.m * 4.0 * (0.40 - vs) + self.m * 9.81 * max(0.0, -hdg[2]) * 0 + self.m * 9.81 * max(0.0, hdg[2]), 0, CLIMB_MAX))
+                # weight relief along the surface: the boost nozzle cancels gravity's down-slope pull (RELIEF of it) + sliding
+                # friction + a speed loop; the suction fan supplies the normal force. tangent = up-slope direction of the loop.
+                tan = np.array([math.cos(th), 0.0, math.sin(th)]); vs = float(v @ tan)
+                f_t = self.m * 9.81 * math.sin(th) * RELIEF + 0.30 * (SUC_MIN + self.m * 9.81 * max(0.0, math.cos(th))) + self.m * 8.0 * (0.50 - vs)
+                out["push"] = tan * float(np.clip(f_t, 0, CLIMB_MAX)) + np.array([0.0, float(np.clip(self.m * (-14.0 * p[1] - 7.0 * v[1]), -20, 20)), 0.0])
                 ey = R.T @ np.array([0.0, 1.0, 0.0]); out["tq"] = np.clip(np.array([0.0, 0.0, fl.I[2] * (25.0 * math.atan2(-ey[0], ey[1]) - 7.0 * w[2])]), -F.TQ_MAX, F.TQ_MAX)
                 if th > math.radians(172) or (th > math.radians(150) and up < -0.93 and p[0] < cx + 0.08):
                     self.go("hang", t, "inverted at the top of the arch -- hanging on suction")
                 elif dt_ph > 14: self.finish(t, False, f"stalled on the arch at {math.degrees(th):.0f} deg")
             elif ph == "hang":
-                self.suction = True
-                if dt_ph > 1.6: self.go("release", t, "suction OFF -- release, half roll"); self.hold = R.copy()
+                self.suction = True; out["tuck"] = True
+                if dt_ph > 1.6:
+                    self.go("release", t, "suction OFF -- release: half roll (+ twist to face the cars)"); self.hold = R.copy(); self.t_rel = t
+                    self.tw = math.remainder(math.pi - yaw_of(self.hold @ F.rx(math.pi)), 2 * math.pi)   # twist needed to face the cars (-x)
             elif ph == "release":
-                self.suction = False; s, sd = minjerk(dt_ph / 0.55)
-                out["lift"], out["tq"] = fl.wrench(R, w, v, self.hold @ F.rx(math.pi * s), np.array([math.pi * sd / 0.55, 0, 0]), lift=0.0)
+                self.suction = False; s, sd = minjerk(dt_ph / ROLL_T); y2, yd = minjerk(dt_ph / YAW_T)
+                out["lift"], out["tq"] = fl.wrench(R, w, v, self.hold @ F.rx(math.pi * s) @ F.rz(self.tw * y2), np.array([math.pi * sd / ROLL_T, 0, self.tw * yd / YAW_T]), lift=0.0)
                 out["push"] = np.array([self.m * 3.0 * (-0.35 - v[0]), 0, 0]); out["push"][0] = float(np.clip(out["push"][0], -BOOST_MAX, BOOST_MAX))
-                if dt_ph > 0.55: self.go("land", t, "landing burn")
+                if dt_ph > ROLL_T: self.go("land", t, "landing burn")
             elif ph == "land":
-                yw = yaw_of(self.hold @ F.rx(math.pi)); lift, tq = fl.wrench(R, w, v, F.rz(yw), vz_des=float(np.clip(-2.5 * (p[2] - 0.12), -3.0, -0.3)))
+                y2, yd = minjerk((t - self.t_rel) / YAW_T); Rt = self.hold @ F.rx(math.pi) @ F.rz(self.tw * y2); Rt = F.rz(yaw_of(Rt))   # roll done, yaw finishing: face the cars
+                lift, tq = fl.wrench(R, w, v, Rt, np.array([0, 0, self.tw * yd / YAW_T]), vz_des=float(np.clip(-2.5 * (p[2] - (0.12 if y2 > 0.97 else 0.40)), -3.0, -0.3 if y2 > 0.97 else 0.5)))   # hover until the twist is done
                 out["lift"] = lift * float(np.clip((up - 0.5) / 0.4, 0, 1)); out["tq"] = tq
                 out["push"] = np.array([float(np.clip(self.m * 3.0 * (0 - v[0]), -BOOST_MAX, BOOST_MAX)), 0, 0])
-                if p[2] < 0.16 and abs(v[2]) < 0.6: self.go("settle", t, "touchdown")
+                if p[2] < 0.16 and abs(v[2]) < 0.6 and y2 > 0.97: self.go("settle", t, "touchdown")
                 elif dt_ph > 3: self.go("settle", t, "touchdown (late)")
             elif ph == "settle":
                 if dt_ph > 1.5:
-                    ok = up > 0.9 and p[2] > 0.06; self.finish(t, ok, "landed on its feet" if ok else f"bad landing (up {up:.2f})", x=round(float(p[0]), 2))
+                    face = math.degrees(abs(math.remainder(yaw_of(R) - math.pi, 2 * math.pi)))
+                    ok = up > 0.9 and p[2] > 0.06 and face < 30
+                    self.finish(t, ok, f"landed on its feet facing the cars ({face:.0f} deg off)" if ok else f"bad landing (up {up:.2f}, {face:.0f} deg off the cars)", x=round(float(p[0]), 2))
         elif a == "kickflip":
             land_x = S.CARS_X - 0.75
             if ph == "approach":                                # turn-free: the ramp act lands facing -x, the solo act starts so
@@ -156,7 +170,7 @@ class Show:
                     ok = up > 0.9 and p[2] > 0.06 and sp.get("t1") is not None
                     self.finish(t, ok, (f"0-1.5 m/s in {sp['t1']:.2f} s, 4 m in {sp['t4']:.2f} s, top {sp['vmax']:.2f} m/s (sim)" if sp.get("t1") else "never reached 1.5 m/s")
                                 if up > 0.9 else "fell over", t_0_1p5=sp.get("t1"), t_4m=sp.get("t4"), vmax=round(sp["vmax"], 2))
-        out["suction"] = (float(np.clip(self.m * 9.81 * max(0.0, -math.cos(th)) + 9.0 - self.m * float(v @ v) / S.ARCH_R * 0.5, 9.0, F.SUCTION_N))
+        out["suction"] = (float(np.clip(self.m * 9.81 * max(0.0, -math.cos(th)) + SUC_MIN, SUC_MIN, F.SUCTION_N))
                           if (self.suction and a == "ramp" and gap < 0.10 + 0.12 and th > math.radians(10)) else 0.0)
         if self.ph not in ("climb", "hang"): self.suction = False
         return out
@@ -176,9 +190,20 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
     for i in rb:
         Ri = live.ximat[i].reshape(3, 3); d = live.xipos[i] - live.xpos[b]
         I += Ri @ np.diag(model.body_inertia[i]) @ Ri.T + model.body_mass[i] * (d @ d * np.eye(3) - np.outer(d, d))
+    # legs-tucked skate: while the script holds a pose, the joint targets are frozen to it instead of the policy's
+    HOLD = {"q": None}; mgr = un.action_manager; term = mgr.get_term(list(mgr.active_terms)[0]); robot = un.scene["robot"]
+    def _apply():
+        if HOLD["q"] is not None: robot.set_joint_position_target(HOLD["q"])
+        else: policy._apply()
+    term.apply_actions = _apply
     show = Show(F.Flight(inertia=np.diag(R0.T @ I @ R0), mass=m), m)
     robot_geoms = {g for g in range(model.ngeom) if model.geom_bodyid[g] in rb}
     car_geoms = {g for g in range(model.ngeom) if (mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g) or "").startswith("car_")}
+    SHOTS = [x for x in os.environ.get("CB_SHOTS", "").split(",") if x]          # "ramp:hang+0.8,kickflip:flip+0.3" -> PNGs
+    if SHOTS:
+        rmod = rm if rm is not None else model; SK.skin(rmod)
+        rmod.vis.global_.offwidth = max(1280, rmod.vis.global_.offwidth); rmod.vis.global_.offheight = max(720, rmod.vis.global_.offheight)
+        rend = mujoco.Renderer(rmod, 720, 1280, max_geom=12000); rdat = mujoco.MjData(rmod); ext = None; shot_done = set()
     obs = env.get_observations(); rec = dict(t=[], qpos=[], lift=[], tq=[], push=[], suction=[], gas=[], g=[], phase=[])
     vprev = None; gnow = 1.0; every = max(1, int(round(0.04 / dt)))
     for s in range(int(TMAX / dt)):
@@ -194,6 +219,9 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
             for c in live.contact[:live.ncon]:
                 n1, n2 = (mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g) for g in (c.geom1, c.geom2)); print("CONTACT", n1, n2, np.round(c.pos, 3), flush=True)
         PAD.walk(u["fwd"])
+        if u.get("tuck") and HOLD["q"] is None:
+            q = policy._targets.clone(); d = robot.data.default_joint_pos.clone(); HOLD["q"] = d + TUCK * (q - d) if TUCK < 1 else q
+        elif not u.get("tuck"): HOLD["q"] = None
         lift, tq, push = u["lift"], u["tq"], u["push"]
         f = show.tank.draw(F.Flight.nozzle_sum(lift, tq) + float(np.linalg.norm(push)), dt); lift *= f; tq = tq * f; push = push * f
         Fw = R @ np.array([0, 0, lift]) + push - R[:, 2] * u["suction"]       # the fan pulls along -body z (toward the surface)
@@ -201,6 +229,15 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
         X = sim.data.xfrc_applied; X[0, b, :] = 0
         X[0, b, 0:3] = torch.as_tensor(Fw, dtype=X.dtype); X[0, b, 3:6] = torch.as_tensor(R @ tq + np.cross(arm, Fw), dtype=X.dtype)
         with torch.inference_mode(): obs, _, _, _ = env.step(policy(obs))
+        for sh in SHOTS:
+            key, off = sh.split("+"); a_, ph_ = key.split(":")
+            if sh not in shot_done and show.act == a_ and show.ph == ph_ and t - show.t_ph >= float(off):
+                shot_done.add(sh); model, live = sim.env_mjdata(0); rdat.qpos[:] = live.qpos; mujoco.mj_forward(rmod, rdat)
+                if ext is None: ext = SK.base_extent(rmod, rdat, b)
+                cam = mujoco.MjvCamera(); cam.lookat[:] = rdat.xpos[b]; cam.distance = 1.6; cam.azimuth = -60; cam.elevation = -12
+                rend.update_scene(rdat, cam); SK.spoiler(rend.scene, rdat, b, *ext); SK.flames(rend.scene, rdat, b, lift, tq, push, *ext)
+                from PIL import Image
+                Image.fromarray(rend.render()).save(OUTD / f"shot_{a_}_{ph_}.png"); print("SHOT", sh, flush=True)
         if s % every == 0:
             model, live = sim.env_mjdata(0); vn = live.qvel[da:da + 3].copy()
             if vprev is not None: gnow = float(np.linalg.norm((vn - vprev) / (every * dt) + np.array([0, 0, 9.81])) / 9.81)

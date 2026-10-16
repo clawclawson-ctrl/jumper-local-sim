@@ -12,7 +12,7 @@ ISP = 70.0                      # s, cold gas (N2)
 GAS0 = 0.60                     # kg of gas in the tank at the start of the show
 DRY_ADD = 0.30                  # kg added to the crab: suction fan + tank + nozzles (gas mass on top)
 LIFT_MAX = 75.0                 # N, both lift nozzles together (~2.7 g for a ~2.9 kg crab + kit)
-TQ_MAX = np.array([2.0, 1.0, 0.6])    # N m about body x (roll: side pair), y (pitch trim), z (yaw trim)
+TQ_MAX = np.array([2.0, 1.0, 1.0])    # N m about body x (roll: side pair), y (pitch trim), z (yaw trim)
 SUCTION_N = 45.0                # N, the fan's pull toward the surface under it (fan only works within SUCTION_GAP)
 SUCTION_GAP = 0.10              # m, base-to-surface distance up to which the fan holds
 

@@ -12,3 +12,10 @@
 - Kickflip act in the stage: seed 1 SUCCESS (cleared all five cars, landed at x -1.27).
 - Ramp act: NOT working yet. The walking policy stalls on the arch at ~45-57 deg: head-first its claws jam into the concave wall (contact dump), tail-first it slips sideways and falls off at ~47 deg; gait paused + thrust can't break floor friction. Ideas next: start the climb from a low-friction ramp pad, lift-assist to unload legs, a gentler entry (clothoid), or a scripted "skate" with legs in a tuck pose.
 - Not yet: sprint trial, Roadster skin + rear spoiler (render-time), overlay/camera/setup panel, MP4, --check hookup, zip.
+
+## Crabster — chunk 3 (2026-10-16 PT)
+- Climb solved (SCRIPTED STUNT): walk tail-first onto the arch; past 10 deg the legs hold a stance pose (skate), the boost nozzle cancels gravity's down-slope pull + sliding friction + speed loop along the loop tangent, suction gives the normal force (>= m g past 90 deg + 20 N), lateral centring nozzle, yaw trim. Arch: R 1.0 m, width 1.4 m, polished concrete mu 0.30 with priority (MuJoCo used the max foot friction before). Head-first jammed claws; world-up weight relief pushed it OFF the surface -- both abandoned.
+- Hang 1.6 s inverted on suction; release -> 0.45 s half roll (+ computed twist; tail-first climb already lands facing the cars) -> landing burn that hovers until the twist is done.
+- Results: ramp seeds 1,2,3 SUCCESS (8-11 deg off the cars); both seeds 1,4 SUCCESS (ramp + kickflip over all five cars); kickflip seed 1 SUCCESS; sprint seed 1 SUCCESS (0-1.5 m/s 0.73 s, 4 m 2.72 s, top 1.69 m/s, sim). Gas 0.60 kg tank, ~0.42 kg used for both.
+- jhs/crabster/skin.py: Roadster skin (gloss red / black / chrome) + rear spoiler + thruster plume capsules (render only). CB_SHOTS env saves PNGs: /workspace/crabster/ramp_inverted.png, mid_kickflip.png.
+- Next: night skybox (sky still renders blue), overlay, cinematic camera, setup panel + replay, MP4 export + audio, --check unit hookup, more seeds, zip.
