@@ -18,14 +18,14 @@ VERT = {k: R_OUT * U[k] for k in KEYS}
 WALL_H, WALL_T = 0.22, 0.10
 KING_D = 1.10                                # king centre: this far from its corner along the bisector
 KING_H = 0.13                                # king half size (a 26 cm block)
-BRICK_ROWS = (0.72, 0.90)                    # brick arc radii around the king
+BRICK_ROWS = (0.80,)                    # brick arc radii around the king
 BRICK_L, BRICK_T, BRICK_H = 0.085, 0.05, 0.07  # brick half sizes: along the arc, radial, height
 HOME_D = 2.60                                # crab start: this far from its corner (2.0 m from the centre)
 BALL_R = 0.065
 BODY_R = 0.24                                # crab footprint radius for the kinematic model + clearances (legs reach 0.236 m)
 CLEAR = 0.30                                 # leg clearance from walls / bricks / kings
-BALL_DECEL = float(os.environ.get("WL_BALL_DECEL", "0.05"))   # m/s^2: low-friction ball (rolls for a long time)
-WALL_E = 0.75                                # wall / brick restitution (bouncy walls)
+BALL_DECEL = float(os.environ.get("WL_BALL_DECEL", "0.03"))   # m/s^2: low-friction ball (rolls for a long time)
+WALL_E = 0.85                                # wall / brick restitution (bouncy walls)
 SERVE_V = 0.45                               # m/s: the referee's serve from the centre (slow: walking crabs ~0.3 m/s can intercept)
 STALL_S = 8.0                                # ball slower than 0.04 m/s for this long -> the referee re-serves from the centre
 ROUND_MAX = float(os.environ.get("WL_ROUND_MAX", "150"))
@@ -92,6 +92,11 @@ class Castles:
     def reset(self): self.alive = {k: [True] * len(self.B[k]) for k in KEYS}
     def left(self, k): return int(sum(self.alive[k]))
     def total(self, k): return len(self.B[k])
+
+    def gaps(self, k):
+        """broken-brick spots of castle k (nearest the arena centre first): where a push gets through to the king."""
+        g = [self.B[k][i][:2] for i, a in enumerate(self.alive[k]) if not a]
+        g.sort(key=lambda q: math.hypot(*q)); return g
 
     def ball_hit(self, p, r=BALL_R + 0.005):
         """bricks the ball at p touches -> [(k, i)]; a king it touches -> k (or None)."""
@@ -180,7 +185,7 @@ def aggression_from_env(env):
 
 
 # ---------------- 2D ball/crab contact model (kinematic harness + unit tests; the real sim uses MuJoCo contacts) ----------------
-def ball_step(p, v, dt, crabs, castles, crab_v=None, e_crab=0.45):
+def ball_step(p, v, dt, crabs, castles, crab_v=None, e_crab=0.6):
     """advance the ball dt: deceleration, crab pushes (disc BODY_R; the ball takes the crab's normal speed), walls/bricks.
     -> p, v, broken [(k, i)], king_hit k|None."""
     p = np.array(p, float); v = np.array(v, float)
@@ -216,7 +221,7 @@ def unit():
     v_in, v_out = tr[hit - 1][2], tr[hit][2]; assert abs(abs(v_out @ U["A"]) / abs(v_in @ U["A"]) - WALL_E) < 0.2, "restitution along the angled normal"
     out.append("angled-wall bounce prediction (normal reflection, restitution)")
     C = Castles(); nb = C.total("A")
-    assert nb == C.total("B") == C.total("C") and nb > 20, nb
+    assert nb == C.total("B") == C.total("C") and nb >= 10, nb
     b0 = C.B["A"][0]; hits, kh = C.ball_hit(np.array(b0[:2])); assert hits and kh is None
     p, v, br, kh = ball_step(np.array(b0[:2]) - 0.2 * (np.array(b0[:2]) - king("A")) / np.linalg.norm(np.array(b0[:2]) - king("A")) * -1,
                              -(np.array(b0[:2]) - king("A")) / np.linalg.norm(np.array(b0[:2]) - king("A")) * 2.0, 0.08, [], C)

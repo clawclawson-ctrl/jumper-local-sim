@@ -35,7 +35,7 @@ class Brain:
         self.team = team; self.rng = rng or np.random.default_rng(0); self.aggr = float(min(1.0, max(0.0, aggression)))
         self.K = G.king(team); self.H = np.array(G.home(team)[:2]); self.inward = -G.U[team]
         self.counts = dict(defends=0, attacks=0, unspins=0, safety=0, scans=0)
-        self.scoreboard = {k: 26 for k in G.KEYS}; self.out = {k: False for k in G.KEYS}
+        self.scoreboard = {k: 13 for k in G.KEYS}; self.out = {k: False for k in G.KEYS}
         self.reset(0.0)
 
     def reset(self, t):
@@ -90,9 +90,10 @@ class Brain:
                     return self._go(pose, wp, face=b if b is not None else np.zeros(2))
             self.opening = None
         reach = 1.6 + 2.6 * self.aggr                         # how far from home I go after the ball
-        if b is not None and enemies and (np.linalg.norm(b - self.H) < reach or np.linalg.norm(b - me) < 0.8):
+        slow = bv is not None and float(np.linalg.norm(bv)) < 0.12
+        if b is not None and enemies and (np.linalg.norm(b - self.H) < reach or np.linalg.norm(b - me) < 0.8 or (slow and np.linalg.norm(b - me) < 3.5)):
             tgt = min(enemies, key=lambda k: (self.scoreboard.get(k, 26), np.linalg.norm(G.king(k) - b)))
-            aim = G.king(tgt) + G.rot(self.team) @ self.jit; d = unitv(aim - b)
+            aim = self.gap_aim(tgt) + G.rot(self.team) @ self.jit; d = unitv(aim - b)
             behind = b - (G.BODY_R + G.BALL_R + 0.10) * d
             rel = me - b; along = rel @ d; lat = abs(rel[0] * d[1] - rel[1] * d[0])
             self.state = "attack"; self.counts["attacks"] += 1; self.target = tgt
@@ -112,6 +113,12 @@ class Brain:
             if np.linalg.norm(g - me) < 0.2: return {"rx": 0.7}
             return self._go(pose, g)
         self.sub = "HOLD guard spot"; return self._go(pose, g, face=b)
+
+    def gap_aim(self, k):
+        """aim point on castle k: its king, through the widest gap of broken bricks when there is one (public scoreboard)."""
+        gaps = self.gaps.get(k) if hasattr(self, "gaps") else None
+        if not gaps: return G.king(k)
+        return np.asarray(gaps[0], float)
 
     def _ring(self, g):
         """guard spots stay on the floor in front of my castle (wall-clear)."""
