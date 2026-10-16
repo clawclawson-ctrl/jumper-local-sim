@@ -141,7 +141,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
             j = model.body_jntadr[b]
             if j < 0 or model.jnt_type[j] != 0: continue
             qa, da = model.jnt_qposadr[j], model.jnt_dofadr[j]
-            live.qpos[qa:qa + 3] = [4.4, 0.6 + 0.9 * i_, 0.3]; live.qpos[qa + 3:qa + 7] = [1, 0, 0, 0]; live.qvel[da:da + 6] = 0
+            live.qpos[qa:qa + 3] = [-2.0 + 1.0 * i_, -4.6, 0.3]; live.qpos[qa + 3:qa + 7] = [1, 0, 0, 0]; live.qvel[da:da + 6] = 0
         mujoco.mj_forward(model, live); sync()
     def truth_pose(k):
         _m, lv = sim.env_mjdata(0); return (float(lv.xpos[base[k]][0]), float(lv.xpos[base[k]][1]), yaw_of(lv.xquat[base[k]]))
