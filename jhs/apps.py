@@ -21,11 +21,12 @@ def inspect(path) -> dict:
         soccer = "vision/soccer.json" in names
         tanks = "vision/tanks.json" in names
         surround = "vision/surround.json" in names
+        warlords = "vision/warlords.json" in names
         src = z.read(brain).decode("utf-8", "replace") if brain else ""
     here = sysconfig.get_platform()
     own = here in exts or (here.startswith("macosx-") and "macosx-universal2" in exts)
     modes = sorted((b.get("modes") or {}).keys())
-    kind = "surround" if surround else "tanks" if tanks else "soccer" if soccer else "hide_seek" if brain == "vision/hide_seek.py" else "tidy_vision" if brain else "flybrain" if "flybrain" in modes else "official"
+    kind = "warlords" if warlords else "surround" if surround else "tanks" if tanks else "soccer" if soccer else "hide_seek" if brain == "vision/hide_seek.py" else "tidy_vision" if brain else "flybrain" if "flybrain" in modes else "official"
     info.update(ok=True, kind=kind, title=title or b.get("name") or p.stem, brain=brain, modes=sorted((b.get("modes") or {}).keys()),
                 controller_platforms=exts, this_platform=here,
                 controller=("the app's own" if own else "built on this computer (mjrl_fsm)"),
@@ -47,6 +48,10 @@ def inspect(path) -> dict:
         info["brain"] = "local sim: jhs/tanks/brain.py (one per crab)"; info["sim_only"] = True; info["local_hooks"] = True
         info["warning"] = ("crab tanks 1v1: two crabs with sim add-on turrets hunt each other with slow, visible shots; each brain uses only "
                            "its own sim camera + dToF + pose (SIM-ONLY VISION CONCEPT). Experimental: one short test match so far.")
+    if kind == "warlords":
+        info["brain"] = "local sim: jhs/warlords/brain.py (one per crab)"; info["sim_only"] = True; info["local_hooks"] = True
+        info["warning"] = ("crab warlords (Atari Warlords): three crabs, one ball, castles of breakable bricks around a king; a ball on your king "
+                           "puts you out; last crab standing takes the round. SIM-ONLY VISION CONCEPT: own camera + dToF + pose, brick counts = scoreboard read.")
     if kind == "surround":
         info["brain"] = "local sim: jhs/surround/brain.py (one per crab)"; info["sim_only"] = True; info["local_hooks"] = True
         info["warning"] = ("crab surround 1v1 (Atari Surround / light-cycle style): each crab lays a glowing trail wall; touch any wall or "

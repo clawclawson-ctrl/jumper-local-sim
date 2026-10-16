@@ -226,6 +226,36 @@ def start_surround(app, setup=None, seed=1, tmax=300.0, speed=1.0, live=True, li
     return proc, rd
 
 
+def start_warlords(app, setup=None, seed=1, tmax=300.0, speed=1.0, live=True, live_size=(1280, 720), physics_hz=None, rounds_to_win=3, aggression=None):
+    """3-crab Crab Warlords (jhs/warlords/run.py) on the triangle castle arena. setup = {openings, camera}; aggression = {A, B, C} in %."""
+    from .warlords import arena as WA
+    info = inspect(app)
+    if not info.get("ok"): raise ValueError(info.get("error"))
+    if info["kind"] != "warlords": raise ValueError("not a crab warlords app")
+    setup = dict(setup or {}); setup.pop("props", None); ag = dict(aggression or {})
+    rd = new_run_dir("warlords")
+    (rd / "setup.json").write_text(json.dumps(setup, indent=1))
+    scene = rd / "scene.map"; WA.build(ROOT / "maps" / "jumper-hide-seek-v7.map", scene)
+    env = base_env()
+    env.update(VS_SEED=str(int(seed)), VS_OUT=str(rd), VS_TMAX=str(float(tmax)), VS_SAVEVIS="0", JHS_SPEED=str(float(speed)), WL_LIVE="1",
+               JHS_LIVE="1" if live else "0", JHS_LIVE_DIR=str(rd / "live"), JHS_STOP=str(rd / "STOP"), WL_SETUP=str(rd / "setup.json"),
+               WL_ROUNDS=str(max(1, min(10, int(rounds_to_win)))), JHS_LIVE_W=str(live_size[0]), JHS_LIVE_H=str(live_size[1]),
+               **{f"WL_AGGR_{k}": str(max(0.0, min(100.0, float(ag.get(k, 60))))) for k in ("A", "B", "C")})
+    app_for_play = Path(info["path"])
+    if os.environ.get("JHS_FORCE_LOCAL_CONTROLLER") == "1":
+        app_for_play = strip_controller(app_for_play, rd / "app_local_controller.app")
+    (rd / "local_run.json").write_text(json.dumps(dict(app=str(app_for_play), app_original=info["path"], scene=str(scene), kind="warlords", setup=setup, seed=seed,
+                                                       tmax=tmax, rounds_to_win=int(rounds_to_win), aggression={k: float(ag.get(k, 60)) for k in ("A", "B", "C")},
+                                                       physics_hz=physics_hz or 1000, speed=speed, started=time.strftime("%Y-%m-%d %H:%M:%S"), info=info), indent=1))
+    cmd = [sys.executable, str(PKG / "warlords" / "run.py"), "--app", str(app_for_play), "--scene", str(scene),
+           "--backend", "native", "--device", "cpu", "--headless", "--steps", "999999999"]
+    if physics_hz: cmd += ["--physics-hz", str(int(physics_hz))]
+    log = open(rd / "log.txt", "w")
+    proc = subprocess.Popen(cmd, cwd=str(rd), env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    (rd / "pid").write_text(str(proc.pid))
+    return proc, rd
+
+
 def start_tidy(app, seed=1, tmax=420.0, speed=1.0, live=True, live_size=(1280, 720)):
     """Tidy-up vision app (vision/tidy_vision.py) on the shipped tidy-up room. The seed places the toys.
     Live picture and, once the run has recorded, an MP4. The toys are not placed by hand."""
