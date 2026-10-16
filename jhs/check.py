@@ -121,6 +121,16 @@ def surround():
     from jhs.surround import game as SG, brain as SB
     return f"{a.name}: surround; unit tests: " + "; ".join(SG.unit() + SB.unit())
 item("crab surround app + trails + brains (SIM-ONLY)", surround)
+
+
+def warlords():
+    a = ROOT / "apps" / "jumper_warlords_vision.app"
+    if not a.exists(): return "apps/jumper_warlords_vision.app not present (skipped)"
+    from jhs.apps import inspect as _insp
+    i = _insp(a); assert i["ok"] and i["kind"] == "warlords", i
+    from jhs.warlords import game as WG, brain as WBr
+    return f"{a.name}: warlords; unit tests: " + "; ".join(WG.unit() + WBr.unit())
+item("crab warlords app + castles + ball + brains (SIM-ONLY)", warlords)
 item("room v7 map", lambda: (ROOT / "maps" / "jumper-hide-seek-v7.map").stat().st_size)
 if "--full" in sys.argv:
     def world():

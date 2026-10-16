@@ -46,6 +46,7 @@ def main():
     ap.add_argument("--rounds-to-win", type=int, default=3, choices=range(1, 11), metavar="1-10", help="surround: first to this many rounds wins (default 3)")
     ap.add_argument("--surround-aggression", type=float, default=60.0, metavar="0-100", help="surround: both crabs, 0 = safe space-seeking, 100 = hunt and cut off (default 60)")
     ap.add_argument("--surround-aggression-red", type=float, default=None, metavar="0-100", help="surround: RED's aggression (overrides --surround-aggression)")
+    ap.add_argument("--warlords-aggression", type=str, default=None, metavar="R,B,G", help="warlords: aggression per crab in %% (RED,BLUE,GREEN; one number = all three; default 60)")
     ap.add_argument("--surround-aggression-blue", type=float, default=None, metavar="0-100", help="surround: BLUE's aggression (overrides --surround-aggression)")
     ap.add_argument("--goals-to-win", type=int, default=3, choices=range(1, 11), metavar="1-10", help="soccer: first to this many goals wins (default 3; --tmax is the cap)")
     ap.add_argument("--aggression", default="0.7,0.7", help="soccer: RED,BLUE aggression 0 (cautious) .. 1 (aggressive), default 0.7,0.7")
@@ -71,6 +72,7 @@ def main():
     if info["kind"] == "soccer": return soccer(a, info, audio)
     if info["kind"] == "tanks": return tanks(a, info, audio)
     if info["kind"] == "surround": return surround(a, info, audio)
+    if info["kind"] == "warlords": return warlords(a, info, audio)
     if info["kind"] == "tidy_vision": return tidy(a, info, audio)
     if info["kind"] not in ("hide_seek", "flybrain"): sys.exit("--headless is for hide & seek, flybrain, tidy-up vision and soccer apps; use ./run.sh for the others")
     FLY = info["kind"] == "flybrain"
@@ -239,6 +241,36 @@ def tanks(a, info, audio):
     print(f"tanks result (referee, SIM TRUTH): {r.get('final') or 'stopped'} -- RED {r['score']['RED']} - {r['score']['BLUE']} BLUE at {r['t_end']} s; "
           f"shots {r['shots_fired']}; hits " + (", ".join(f"{h['team']}->{h['target']} {h['t']}s" for h in r["hits"]) or "none") + f"; falls {r['falls']}")
     if a.mp4 or a.mp4_folder: render(rd, a, audio)
+
+
+def warlords(a, info, audio):
+    """crab warlords, three crabs, without a window (SIM-ONLY VISION CONCEPT). Openers: hold|advance|left|right|centre."""
+    setup = json.loads(Path(a.setup).expanduser().read_text()) if a.setup else {}
+    op = dict(setup.get("openings") or {}); op.setdefault("mode", a.openings)
+    if a.seed is not None: op.setdefault("seed", a.seed)
+    setup["openings"] = op
+    if a.camera: setup["camera"] = a.camera
+    v = [float(x) for x in (a.warlords_aggression or "60").split(",")]; v = (v * 3)[:3] if len(v) == 1 else v
+    ag = dict(zip(("A", "B", "C"), v))
+    tmax = a.tmax or 300.0; seed = a.seed if a.seed is not None else (a.random if a.random is not None else 1)
+    proc, rd = runner.start_warlords(info["path"], setup=setup, seed=seed, tmax=tmax, speed=0.0 if a.uncapped else 1.0, live=not a.no_live,
+                                     physics_hz=a.physics or (200 if a.fast else None), rounds_to_win=a.rounds_to_win, aggression=ag)
+    print(f"run folder: {rd}\n(SIM-ONLY VISION CONCEPT) crab warlords, {tmax:.0f} sim-seconds, first to {a.rounds_to_win}, aggression {ag}", flush=True)
+    try:
+        last = 0
+        while proc.poll() is None:
+            time.sleep(2); st = runner.run_state(rd)
+            if time.time() - last > 15 and st.get("t") is not None:
+                last = time.time(); print(f"  sim t={float(st['t']):6.1f}s  rate={st.get('rate', 0) or 0:.2f}x  {st.get('state', '')}  {st.get('ref', '')}", flush=True)
+    except KeyboardInterrupt:
+        print("stopping...", flush=True); (rd / "STOP").write_text("stop")
+        try: proc.wait(120)
+        except KeyboardInterrupt: proc.kill()
+    rp = rd / "result.json"
+    if not rp.exists(): print(runner.run_state(rd).get("log_tail", "")); sys.exit(f"the match ended without a result; see {rd/'log.txt'}")
+    r = json.loads(rp.read_text())
+    print(f"warlords result (referee, SIM TRUTH): {r.get('final') or 'stopped'} -- {r['score']} at {r['t_end']} s; bricks broken {r['bricks_broken']}; rounds "
+          + "; ".join(f"R{x['round']} {x['winner'] or 'draw'} ({x['how']}, {x['t']} s)" for x in r["rounds"]) + f"; falls {r['falls']}; max spin {r['max_spin_only_s']}")
 
 
 def surround(a, info, audio):

@@ -53,6 +53,7 @@ class Brain:
         self.t = t; self.pose = pose
         bs = p.get("ball") or []
         if bs:
+            self.counts['ball_seen'] = self.counts.get('ball_seen', 0) + 1
             b = np.asarray(min(bs, key=lambda d: d.get("rng", 1.0))["xy"], float)
             if self.ball is not None and t - self.ball_t < 1.0 and np.linalg.norm(b - self.ball) > 1.0: self.obs.clear()   # a jump: new track
             self.obs.append((t, b)); self.ball = b; self.ball_t = t
