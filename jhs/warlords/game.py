@@ -26,6 +26,8 @@ BODY_R = 0.24                                # crab footprint radius for the kin
 CLEAR = 0.30                                 # leg clearance from walls / bricks / kings
 BALL_DECEL = float(os.environ.get("WL_BALL_DECEL", "0.008"))   # m/s^2: low-friction ball (rolls for a long time)
 WALL_E = 0.90                                # wall / brick restitution (bouncy stone; MuJoCo solref WALL_SOLREF below)
+WALL_E_OUT = 0.975                           # the outer triangle walls: near-elastic (extra bouncy)
+WALL_SOLREF_OUT = "-40000 -3"                # zeta ~0.008 -> restitution ~0.975
 WALL_SOLREF = "-40000 -12"                   # direct stiffness/damping: zeta ~0.03 -> restitution ~0.9, 1.5 cm max squash at 3 m/s
 BALL_SPEED = float(os.environ.get("WL_BALL_SPEED", "1.6"))     # m/s: "Ball speed" setting = the castle-test shot speed (no serves since the kickoff rule)
 SERVE_V = 0.0                                # KICKOFF: the ball starts every round AT REST at the centre (no serve, no random kick)
@@ -116,6 +118,11 @@ class Castles:
         return hits, kh
 
 
+def rest_e(p, castles=None):
+    """restitution of the solid nearest to p: outer wall WALL_E_OUT, bricks / kings WALL_E."""
+    return WALL_E_OUT if tri_clear(*p) <= wall_at(p, castles)[0] + 1e-9 else WALL_E
+
+
 def wall_at(p, castles=None):
     """the solid things a ball can bounce off at p: (clearance, inward normal). Walls + intact bricks + kings."""
     best = (tri_clear(*p), tri_normal(*p))
@@ -143,7 +150,7 @@ def predict_ball(p, v, horizon, castles=None, step=0.05):
         v = v * max(0.0, sp - BALL_DECEL * step) / sp; q = p + v * step
         d, n = wall_at(q, castles)
         if d < BALL_R and v @ n < 0:
-            v = v - (1 + WALL_E) * (v @ n) * n; q = p + v * step
+            v = v - (1 + rest_e(q, castles)) * (v @ n) * n; q = p + v * step
             if wall_at(q, castles)[0] < BALL_R: q = p
         p = q; t += step; out.append((t, p.copy(), v.copy()))
     return out
@@ -233,7 +240,7 @@ def _ball_step(p, v, dt, crabs, castles, crab_v=None, e_crab=0.6):
     q = p + v * dt; dd, n = wall_at(q, castles)
     broken, kh = castles.ball_hit(q, BALL_R + 0.01)
     if dd < BALL_R and v @ n < 0:
-        v = v - (1 + WALL_E) * (v @ n) * n; q = p + v * dt
+        v = v - (1 + rest_e(q, castles)) * (v @ n) * n; q = p + v * dt
         if wall_at(q, castles)[0] < BALL_R: q = p
     for (k, i) in broken: castles.alive[k][i] = False
     return q, v, broken, kh
@@ -249,7 +256,7 @@ def unit():
     tr = predict_ball((0, 0), 0.6 * d, 10.0); n = -U["A"]
     hit = next((i for i, (_, p, v) in enumerate(tr) if v @ U["A"] > 0), None)
     assert hit is not None and all(tri_clear(*p) > BALL_R - 0.02 for _, p, _ in tr), "reflects off the angled wall"
-    v_in, v_out = tr[hit - 1][2], tr[hit][2]; assert abs(abs(v_out @ U["A"]) / abs(v_in @ U["A"]) - WALL_E) < 0.2, "restitution along the angled normal"
+    v_in, v_out = tr[hit - 1][2], tr[hit][2]; assert abs(abs(v_out @ U["A"]) / abs(v_in @ U["A"]) - WALL_E_OUT) < 0.2, "restitution along the angled normal"
     out.append("angled-wall bounce prediction (normal reflection, restitution)")
     C = Castles(); nb = C.total("A")
     assert nb == C.total("B") == C.total("C") and nb >= 10, nb
@@ -272,7 +279,10 @@ def unit():
     p, v, br, kh = ball_step(b0 + 0.5 * u, -BALL_VMAX * u, 0.25, [], C3)     # 80 cm in one call: substeps must still hit the brick
     assert br == [("A", 6)] and kh is None and v @ u > 0, "no tunnelling at top speed"
     v2 = paddle(np.zeros(2), np.array([0.5, 0.0]), np.array([1.0, 0.0])); assert abs(v2[0] - (1 + PADDLE_E) * 0.5) < 1e-9 if PADDLE else True
+    p, v, br, kh = ball_step(np.array([0.0, -R_IN + 0.4]), np.array([0.0, -BALL_VMAX]), 0.3, [], Castles())
+    assert tri_clear(*p) > 0 and v[1] > 0 and abs(v[1] / BALL_VMAX - WALL_E_OUT) < 0.05, (p, v)
     out.append("fast ball: no tunnelling through bricks at 3.2 m/s; paddle boost = elastic heavy paddle")
+    out.append(f"outer wall near-elastic (e={WALL_E_OUT}), no tunnelling at 3.2 m/s")
     return out
 
 

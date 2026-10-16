@@ -174,7 +174,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
     pending = None; ref_line = "GO!"; banner = None; served = False
     stall = 0.0; serves = 0; still = {k: 0.0 for k in K3}; max_still = {k: 0.0 for k in K3}; rot_only = {k: 0.0 for k in K3}; max_rot = {k: 0.0 for k in K3}
     t_wall = time.time(); stopped = False; t = 0.0; cmds = {k: {} for k in K3}; P = {k: tuple(START[k][:2]) + (math.radians(START[k][2]),) for k in K3}
-    broken_n = 0; cracked = set(); kick_t = {k: 0.0 for k in K3}; kicks = {k: 0 for k in K3}; bv_prev = None
+    broken_n = 0; cracked = set(); kick_t = {k: 0.0 for k in K3}; kicks = {k: 0 for k in K3}; bv_prev = None; tunnel_seen = False
     def ev(kind, **kw):
         e = dict(t=round(t, 2), event=kind, **kw); events.append(e); print(f"[ref] {e}", flush=True)
     def end_round(how, rw):
@@ -265,6 +265,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
                             live.qvel[bda:bda + 2] = v2; bv_ = v2; kick_t[k] = t + 0.4; kicks[k] += 1; kicked = True
                 # touches: within 3 cm, OR the ball bounced this step (velocity flipped) near a brick/king -- a fast ball can touch
                 # and leave inside one env step's physics substeps (contacts are physical; this only tells the referee)
+                if G.tri_clear(*bxy) < -0.02 and not tunnel_seen: tunnel_seen = True; ev("TUNNEL", at=[round(float(v), 2) for v in bxy])
                 near_ = any(out[k] is None and float(np.linalg.norm(bxy - live.qpos[model.jnt_qposadr[model.body_jntadr[base[k]]]:][:2])) < G.REACH for k in K3)
                 bounced = not kicked and bv_prev is not None and float(np.linalg.norm(bv_ - bv_prev)) > 0.25
                 hits, kh_ = castles.ball_hit(bxy, G.BALL_R + 0.03 + (float(np.linalg.norm(bv_)) * dt if bounced else 0.0))
@@ -312,7 +313,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=None, monitor=None)
         res = dict(kind="warlords", label="SIM-ONLY VISION CONCEPT", seed=SEED, openings=dict(mode=OPEN_CFG["mode"], seed=OPEN_SEED, rounds=OPEN_LOG),
                    tmax=TMAX, rounds_to_win=ROUNDS_TO_WIN, aggression={G.TEAM[k]: v for k, v in AGGR.items()}, t_end=round(step * dt, 2), stopped=stopped,
                    score={G.TEAM[k]: v for k, v in score.items()}, rounds=rounds, winner=G.TEAM.get(winner) if final else None, final=final,
-                   falls={G.TEAM[k]: v for k, v in falls.items()}, bricks_broken=broken_n, paddle_kicks={G.TEAM[k]: v for k, v in kicks.items()}, ball_speed=G.BALL_SPEED, paddle=G.PADDLE, recentres=serves, round_max=G.ROUND_MAX,
+                   falls={G.TEAM[k]: v for k, v in falls.items()}, bricks_broken=broken_n, paddle_kicks={G.TEAM[k]: v for k, v in kicks.items()}, ball_speed=G.BALL_SPEED, paddle=G.PADDLE, recentres=serves, tunnelled=tunnel_seen, round_max=G.ROUND_MAX,
                    max_spin_only_s={G.TEAM[k]: round(v, 1) for k, v in max_rot.items()}, max_standing_s={G.TEAM[k]: round(v, 1) for k, v in max_still.items()},
                    brain_counts={G.TEAM[k]: dict(b.counts) for k, b in brains.items()}, wall_s=round(time.time() - t_wall, 1))
         json.dump(res, open(OUTD / "result.json", "w"), indent=1)

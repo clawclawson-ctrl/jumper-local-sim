@@ -58,7 +58,7 @@ class BallBelief:
         c = Q @ UK.T + G.R_IN                                  # clearance to each wall
         for j in range(3):
             hit = (c[:, j] < G.BALL_R) & (self.V @ UK[j] < 0)
-            self.V[hit] -= (1 + G.WALL_E) * (self.V[hit] @ UK[j])[:, None] * UK[j]
+            self.V[hit] -= (1 + G.WALL_E_OUT) * (self.V[hit] @ UK[j])[:, None] * UK[j]
         Q = np.where(_inside(Q)[:, None], Q, self.P + self.V * dt); Q = np.where(_inside(Q, 0.0)[:, None], Q, self.P)
         self.P = Q
         m = self.rng.random(self.n) < REGROW
